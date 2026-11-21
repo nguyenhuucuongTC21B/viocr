@@ -1,0 +1,59 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write # cần để tạo GitHub Release khi push tag
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+
+      - name: Cài cross-compiler mingw-w64 cho Windows
+        run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64
+
+      - name: Tải model ONNX + onnxruntime runtime lib vào assets/
+        run: |
+          pip install onnx
+          python3 tools/get_assets.py
+
+      - name: Build Linux x64
+        run: go build -trimpath -ldflags "-s -w" -o viocr-linux-x64 .
+
+      - name: Build Windows x64 (.exe)
+        env:
+          CGO_ENABLED: "1"
+          GOOS: windows
+          GOARCH: amd64
+          CC: x86_64-w64-mingw32-gcc
+        run: go build -trimpath -ldflags "-s -w" -o viocr-windows-x64.exe .
+
+      - name: Kiểm tra file
+        run: file viocr-linux-x64 viocr-windows-x64.exe && ls -la viocr-*
+
+      - name: Upload artifact (mọi lần chạy)
+        uses: actions/upload-artifact@v4
+        with:
+          name: viocr-binaries
+          path: |
+            viocr-linux-x64
+            viocr-windows-x64.exe
+          retention-days: 30
+
+      - name: Đính kèm vào GitHub Release khi push tag v*
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            viocr-linux-x64
+            viocr-windows-x64.exe
