@@ -5,6 +5,7 @@ package main
 // cls 180° → VietOCR (transformer mặc định / seq2seq) → ghép dòng.
 
 import (
+	"bufio"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -24,6 +25,16 @@ type imageResult struct {
 }
 
 func main() {
+	// Bắt panic để hiện thông báo + chờ Enter (console nhấp đúp sẽ không
+	// đóng ngay làm mất thông báo lỗi).
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintln(os.Stderr, "viocr: lỗi nghiêm trọng:", r)
+			pauseIfInteractive()
+			os.Exit(1)
+		}
+	}()
+
 	var (
 		flagJSON      = flag.Bool("json", false, "xuất kết quả dạng JSON (mỗi ảnh 1 dòng)")
 		flagEngine    = flag.String("rec-engine", "transformer", "engine nhận dạng: transformer | seq2seq")
@@ -47,6 +58,8 @@ func main() {
 	files := flag.Args()
 	if len(files) == 0 {
 		fmt.Fprintln(os.Stderr, "Cách dùng: viocr [flags] ảnh1 [ảnh2 ...]  (xem --help)")
+		fmt.Fprintln(os.Stderr, "Ví dụ: viocr-windows-x64.exe anh.jpg   — không có ảnh sẽ chỉ hiện hướng dẫn rồi thoát.")
+		pauseIfInteractive()
 		os.Exit(2)
 	}
 	if *flagEngine != "transformer" && *flagEngine != "seq2seq" {
@@ -99,7 +112,20 @@ func main() {
 
 func fatal(err error) {
 	fmt.Fprintln(os.Stderr, "viocr:", err)
+	pauseIfInteractive()
 	os.Exit(1)
+}
+
+// pauseIfInteractive chờ Enter khi đang chạy trong console tương tác (nhấp đúp
+// exe trên Windows) để người dùng kịp đọc thông báo trước khi cửa sổ đóng.
+// Khi stdin bị pipe/chuyển hướng (script) thì thoát ngay, không pause.
+func pauseIfInteractive() {
+	fi, err := os.Stdin.Stat()
+	if err != nil || (fi.Mode()&os.ModeCharDevice) == 0 {
+		return
+	}
+	fmt.Fprintln(os.Stderr, "Nhấn Enter để thoát...")
+	bufio.NewReader(os.Stdin).ReadBytes('\n')
 }
 
 // processImage chạy trọn pipeline cho 1 ảnh.

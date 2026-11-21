@@ -39,6 +39,25 @@ Lần chạy đầu tiên, binary giải nén model vào thư mục cache rồi 
 - Windows: `%LocalAppData%\viocr\1.0.0\`
 - Linux: `~/.cache/viocr/1.0.0/`
 
+## Chạy trên Windows: yêu cầu & lỗi thường gặp
+
+- **Yêu cầu bắt buộc: Microsoft Visual C++ Redistributable (bản x64)** —
+  `onnxruntime.dll` phụ thuộc `MSVCP140.dll` / `VCRUNTIME140.dll` vốn KHÔNG có
+  sẵn trong Windows. Nếu chạy lên là console nháy rồi tắt, hãy tải và cài bản
+  x64 tại: https://aka.ms/vs/17/release/vc_redist.x64.exe (máy đã cài qua game
+  hoặc phần mềm khác thường có sẵn, có thể bỏ qua). Chỉ cần cài một lần.
+- **Đừng chỉ nhấp đúp exe** — nhấp đúp không kèm ảnh sẽ chỉ hiện hướng dẫn.
+  Mở `cmd`/`PowerShell` trong thư mục chứa exe rồi chạy kèm ảnh:
+  ```powershell
+  .\viocr-windows-x64.exe anh.jpg
+  .\viocr-windows-x64.exe --json scan.png
+  ```
+- Từ bản v1.0.1: khi chạy tương tác (nhấp đúp), chương trình **chờ Enter trước
+  khi thoát** ở màn hình hướng dẫn và khi gặp lỗi — nên luôn đọc được thông báo.
+  Nếu vẫn cần giữ cửa sổ, chạy từ cmd như trên.
+- Dung lượng ~259 MB hiển thị trong Windows Explorer = 272.001.536 bytes
+  (Explorer tính theo đơn vị MiB) — file đúng nguyên vẹn.
+
 ## Cách 1 — có file exe ngay (không cần GitHub)
 
 Nhóm phát triển đã build sẵn `viocr-windows-x64.exe` (kiểm tra phần Releases

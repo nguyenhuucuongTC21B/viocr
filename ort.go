@@ -6,6 +6,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 
 	ort "github.com/yalue/onnxruntime_go"
@@ -45,7 +46,13 @@ func InitRuntime() (assetDir string, err error) {
 	}
 	ort.SetSharedLibraryPath(lib)
 	if err := ort.InitializeEnvironment(); err != nil {
-		return "", fmt.Errorf("khởi tạo ONNX Runtime: %w", err)
+		err = fmt.Errorf("khởi tạo ONNX Runtime: %w", err)
+		if runtime.GOOS == "windows" {
+			// onnxruntime.dll phụ thuộc VC++ Redistributable (MSVCP140/VCRUNTIME140)
+			// — máy thiếu sẽ LoadLibrary thất bại ngay khi khởi động.
+			return "", fmt.Errorf("%w\n  Trên Windows hãy cài Microsoft Visual C++ Redistributable (bản x64):\n  https://aka.ms/vs/17/release/vc_redist.x64.exe  rồi chạy lại.", err)
+		}
+		return "", err
 	}
 	return assetDir, nil
 }

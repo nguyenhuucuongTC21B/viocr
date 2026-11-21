@@ -15,7 +15,7 @@ import (
 	"path/filepath"
 )
 
-const appVersion = "1.0.0"
+const appVersion = "1.0.1"
 
 //go:embed assets/det.onnx assets/cls.onnx assets/rec_t_enc.onnx assets/rec_t_dec.onnx
 //go:embed assets/rec_s_cnn.onnx assets/rec_s_enc.onnx assets/rec_s_dec.onnx
