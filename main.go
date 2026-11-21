@@ -1,0 +1,199 @@
+package main
+
+// main.go — viocr: OCR tiếng Việt chạy offline, nhúng toàn bộ model trong 1
+// file binary. Pipeline: PP-OCRv5 det → DBNet postprocess → crop phối cảnh →
+// cls 180° → VietOCR (transformer mặc định / seq2seq) → ghép dòng.
+
+import (
+	"encoding/json"
+	"flag"
+	"fmt"
+	"os"
+	"time"
+
+	ort "github.com/yalue/onnxruntime_go"
+)
+
+type imageResult struct {
+	File    string       `json:"file"`
+	Width   int          `json:"width"`
+	Height  int          `json:"height"`
+	Lines   []string     `json:"lines"`
+	Results []LineResult `json:"results"`
+	Ms      float64      `json:"ms"`
+}
+
+func main() {
+	var (
+		flagJSON      = flag.Bool("json", false, "xuất kết quả dạng JSON (mỗi ảnh 1 dòng)")
+		flagEngine    = flag.String("rec-engine", "transformer", "engine nhận dạng: transformer | seq2seq")
+		flagDetSide   = flag.Int("det-side", 960, "cận resize det (pixel)")
+		flagDetType   = flag.String("det-type", "max", "kiểu cận det: max | min")
+		flagDetThresh = flag.Float64("det-thresh", 0.3, "ngưỡng nhị phân DBNet")
+		flagBoxThresh = flag.Float64("box-thresh", 0.5, "ngưỡng điểm box")
+		flagUnclip    = flag.Float64("unclip", 1.6, "hệ số mở rộng box (unclip)")
+		flagMinSize   = flag.Int("min-size", 3, "kích thước box nhỏ nhất (pixel)")
+		flagMaxLen    = flag.Int("max-len", 128, "số bước decode tối đa")
+		flagNoCls     = flag.Bool("no-cls", false, "tắt phân loại hướng 180°")
+		flagThreads   = flag.Int("threads", 0, "số thread ONNX Runtime (0 = mặc định)")
+		flagQuiet     = flag.Bool("quiet", false, "không in log ra stderr")
+		flagVersion   = flag.Bool("version", false, "in phiên bản")
+	)
+	flag.Parse()
+	if *flagVersion {
+		fmt.Println("viocr", appVersion)
+		return
+	}
+	files := flag.Args()
+	if len(files) == 0 {
+		fmt.Fprintln(os.Stderr, "Cách dùng: viocr [flags] ảnh1 [ảnh2 ...]  (xem --help)")
+		os.Exit(2)
+	}
+	if *flagEngine != "transformer" && *flagEngine != "seq2seq" {
+		fmt.Fprintln(os.Stderr, "--rec-engine phải là transformer hoặc seq2seq")
+		os.Exit(2)
+	}
+	maxSeqLen = *flagMaxLen
+
+	assetDir, err := InitRuntime()
+	if err != nil {
+		fatal(err)
+	}
+	engine, err := NewEngine(assetDir, *flagThreads, *flagQuiet)
+	if err != nil {
+		fatal(err)
+	}
+	defer engine.Destroy()
+
+	detP := &DetParams{
+		LimitSide: *flagDetSide,
+		LimitType: *flagDetType,
+		Thresh:    float32(*flagDetThresh),
+		BoxThresh: float32(*flagBoxThresh),
+		Unclip:    *flagUnclip,
+		MinSize:   *flagMinSize,
+	}
+
+	exitCode := 0
+	for i, path := range files {
+		res, err := processImage(engine, detP, path, *flagEngine, !*flagNoCls)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "viocr: lỗi %s: %v\n", path, err)
+			exitCode = 1
+			continue
+		}
+		if *flagJSON {
+			b, _ := json.Marshal(res)
+			fmt.Println(string(b))
+		} else {
+			for _, ln := range res.Lines {
+				fmt.Println(ln)
+			}
+			if i < len(files)-1 {
+				fmt.Println()
+			}
+		}
+	}
+	os.Exit(exitCode)
+}
+
+func fatal(err error) {
+	fmt.Fprintln(os.Stderr, "viocr:", err)
+	os.Exit(1)
+}
+
+// processImage chạy trọn pipeline cho 1 ảnh.
+func processImage(e *Engine, p *DetParams, path, engineName string, useCls bool) (*imageResult, error) {
+	start := time.Now()
+	img, err := LoadImage(path)
+	if err != nil {
+		return nil, err
+	}
+	res := &imageResult{File: path, Width: img.W, Height: img.H, Lines: []string{}, Results: []LineResult{}}
+
+	// 1) detection
+	x, nh, nw := DetPreprocess(img, p)
+	inTensor, err := newF32Tensor([]int64{1, 3, int64(nh), int64(nw)}, x)
+	if err != nil {
+		return nil, err
+	}
+	defer inTensor.Destroy()
+	detOuts, err := runAlloc(e.det, []ort.Value{inTensor}, 1)
+	if err != nil {
+		return nil, err
+	}
+	defer destroyValues(detOuts)
+	raw := asTensor(detOuts[0]).GetData()
+	prob := make([]float32, len(raw))
+	copy(prob, raw)
+	if probMax(prob) > 1.0 || probMin(prob) < 0.0 {
+		// model xuất logits → sigmoid (một số bản export đã sigmoid sẵn)
+		for i, v := range prob {
+			prob[i] = float32(1 / (1 + expNeg(v)))
+		}
+	}
+	boxes := FindBoxes(prob, nh, nw, img.H, img.W, p)
+	if os.Getenv("VIOCR_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "[dbg] det in=%dx%d outLen=%d min=%.4f max=%.4f mean=%.4f boxes=%d\n",
+			nw, nh, len(prob), probMin(prob), probMax(prob), meanF(prob), len(boxes))
+	}
+
+	// 2) nhận dạng từng box + ghép dòng
+	order := GroupLines(boxes)
+	for _, lineIdx := range order {
+		lineRes := make([]LineResult, 0, len(lineIdx))
+		for _, bi := range lineIdx {
+			sb := boxes[bi]
+			crop := CropQuad(img, sb.Box)
+			if crop == nil {
+				continue
+			}
+			text, conf, err2 := e.recBest(crop, engineName, useCls)
+			if err2 != nil {
+				return nil, err2
+			}
+			lineRes = append(lineRes, LineResult{Box: sb.Box, DetScore: sb.Score, Text: text, Conf: conf})
+		}
+		if len(lineRes) == 0 {
+			continue
+		}
+		res.Results = append(res.Results, lineRes...)
+		res.Lines = append(res.Lines, JoinLine(lineRes))
+	}
+	res.Ms = float64(time.Since(start).Milliseconds())
+	return res, nil
+}
+
+// recBest nhận dạng 1 crop: crop dọc (h/w >= 1.5) thử 3 hướng như DeepDoc;
+// crop ngang áp cls 180° (nếu bật).
+func (e *Engine) recBest(crop *RGB, engineName string, useCls bool) (string, float64, error) {
+	recOne := func(c *RGB) (string, float64, error) {
+		if engineName == "seq2seq" {
+			return e.RecSeq2Seq(c)
+		}
+		return e.RecTransformer(c)
+	}
+	if float64(crop.H)/float64(maxI(crop.W, 1)) >= 1.5 {
+		bestTxt, bestConf := "", 0.0
+		for _, c := range []*RGB{crop, Rotate90(crop, 3), Rotate90(crop, 1)} {
+			t, cf, err := recOne(c)
+			if err != nil {
+				return "", 0, err
+			}
+			if cf > bestConf {
+				bestTxt, bestConf = t, cf
+			}
+		}
+		return bestTxt, bestConf, nil
+	}
+	if useCls {
+		p180, err := e.ClsScore(crop)
+		if err != nil {
+			return "", 0, err
+		}
+		if p180 > clsThresh {
+			crop = Rotate180(crop)
+		}
+	}
+	return recOne(crop)
+}
