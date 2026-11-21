@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Viocr — Nhận dạng văn bản tiếng Việt (offline)</title>
+<style>
+:root{
+  --navy:#0b2047; --navy2:#0a1c3e; --navy3:#123061;
+  --gold:#f0b41c; --gold2:#ffd257;
+  --bg:#eef1f6; --card:#ffffff; --ink:#1c2b45;
+  --line:#dbe2ee; --muted:#6b7a95; --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444;
+}
+*{box-sizing:border-box; margin:0; padding:0}
+html,body{height:100%}
+body{font-family:"Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",Arial,sans-serif;
+     background:var(--bg); color:var(--ink); display:flex; flex-direction:column; min-height:100vh}
+.app{display:flex; flex:1; min-height:0}
+
+/* ===== SIDEBAR ===== */
+aside{width:288px; flex:none; background:linear-gradient(180deg,var(--navy),var(--navy2));
+      color:#e8eefc; padding:18px 16px; display:flex; flex-direction:column; gap:14px; overflow-y:auto}
+.brand{display:flex; align-items:center; gap:10px}
+.brand svg{width:52px; height:52px; flex:none}
+.brand .name{font-size:clamp(1.25rem,2vw,1.5rem); font-weight:800; letter-spacing:.3px}
+.brand .name b{color:var(--gold)}
+.brand .sub{font-size:.72rem; color:#9db1d6; letter-spacing:.6px}
+.badge{background:#0e2a58; border:1px solid #23437c; color:#cfe0ff; border-radius:8px;
+       padding:8px 10px; font-size:.8rem; text-align:center}
+.sec{margin-top:4px}
+.sec h3{font-size:.72rem; letter-spacing:1.2px; color:#8fa6cf; text-transform:uppercase; margin-bottom:8px}
+select,input[type=text]{width:100%; border-radius:8px; border:1px solid #2a4a86; background:#0e2a58;
+       color:#eef4ff; padding:10px 12px; font-size:.9rem; outline:none}
+select:focus,input[type=text]:focus{border-color:var(--gold)}
+label.small{font-size:.75rem; color:#9db1d6; display:block; margin:10px 0 6px}
+.logic{margin-top:6px}
+.logic h2{font-size:1.05rem; color:var(--gold); margin:2px 0 8px}
+.logic p{font-size:.85rem; line-height:1.55; color:#c9d7f2}
+.logic ul{margin:10px 0 0 16px; font-size:.84rem; line-height:1.6; color:#c9d7f2}
+.logic li::marker{color:var(--gold)}
+.side-note{margin-top:auto; font-size:.72rem; color:#7d92bb; line-height:1.5}
+
+/* ===== HEADER ===== */
+.right{flex:1; display:flex; flex-direction:column; min-width:0}
+header{background:linear-gradient(180deg,var(--navy),var(--navy3)); color:#fff;
+       padding:14px 22px; display:flex; align-items:center; gap:14px; flex-wrap:wrap}
+header .titles{flex:1; min-width:260px}
+header h1{font-size:clamp(1.05rem,2.2vw,1.4rem); font-weight:800}
+header h1 .star{color:var(--gold)}
+header .sub{font-size:.8rem; color:#b9c9ea; margin-top:4px}
+.dot{width:11px; height:11px; border-radius:50%; background:var(--warn); display:inline-block;
+     box-shadow:0 0 0 4px rgba(240,180,28,.18)}
+.dot.ready{background:var(--ok); box-shadow:0 0 0 4px rgba(34,197,94,.18)}
+.dot.err{background:var(--bad); box-shadow:0 0 0 4px rgba(239,68,68,.18)}
+.status{display:flex; align-items:center; gap:8px; font-size:.8rem; color:#dbe6ff}
+.btn-guide{background:#0e2a58; color:#eef4ff; border:1px solid #2a4a86; border-radius:8px;
+           padding:9px 14px; font-size:.82rem; cursor:pointer}
+.btn-guide:hover{border-color:var(--gold); color:var(--gold2)}
+
+/* ===== CONTENT ===== */
+main{flex:1; display:grid; grid-template-columns:1fr 1fr; gap:18px; padding:18px; min-height:0}
+.panel{background:var(--card); border-radius:12px; box-shadow:0 2px 10px rgba(15,35,80,.08);
+       padding:16px; display:flex; flex-direction:column; min-width:0}
+.panel-head{display:flex; justify-content:space-between; align-items:baseline; margin-bottom:12px}
+.panel-head h2{font-size:1rem; font-weight:800; color:var(--navy)}
+.panel-head h2 b{color:var(--gold)}
+.meta{font-size:.78rem; color:var(--muted)}
+.drop{border:2px dashed #b9c6de; border-radius:10px; background:#f7f9fd; cursor:pointer;
+      display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px;
+      padding:34px 16px; text-align:center; transition:.15s; position:relative; overflow:hidden}
+.drop:hover,.drop.over{border-color:var(--gold); background:#fffaf0}
+.drop .ic{width:46px; height:46px; border-radius:50%; background:#e7edf7; display:flex;
+          align-items:center; justify-content:center; font-size:1.3rem; color:#5a719c}
+.drop p{font-size:.92rem; font-weight:600; color:#3a4d74}
+.drop small{font-size:.75rem; color:var(--muted)}
+.preview-wrap{position:relative; display:none; margin-top:10px}
+.preview-wrap canvas{position:absolute; inset:0; width:100%; height:100%; pointer-events:none}
+#preview{display:block; width:100%; max-height:380px; object-fit:contain; background:#0e2a58;
+         border-radius:8px}
+.file-info{display:flex; gap:16px; justify-content:center; margin-top:8px; font-size:.76rem; color:var(--muted)}
+.actions{display:flex; gap:10px; margin-top:14px; flex-wrap:wrap}
+button.act{border:none; border-radius:8px; padding:11px 18px; font-size:.9rem; font-weight:700; cursor:pointer}
+#btnRun{background:var(--gold); color:#1c2b45; flex:1; min-width:150px}
+#btnRun:hover{background:var(--gold2)}
+#btnRun:disabled{opacity:.55; cursor:not-allowed}
+.btn-ghost{background:#fff; color:var(--navy); border:1px solid var(--line)}
+.btn-ghost:hover{border-color:var(--gold)}
+.result-box{position:relative; flex:1; display:flex; flex-direction:column; min-height:300px}
+#result{flex:1; width:100%; border:1px solid var(--line); border-radius:8px; padding:12px;
+        font-size:.95rem; line-height:1.65; resize:none; outline:none; color:var(--ink);
+        background:#fbfcfe; min-height:280px}
+#result:focus{border-color:var(--gold)}
+.empty{position:absolute; inset:1px; display:flex; align-items:flex-start; padding:14px;
+       color:#9aa8c2; font-size:.92rem; background:#fbfcfe; border-radius:8px; pointer-events:none}
+.overlay{position:absolute; inset:0; background:rgba(255,255,255,.86); display:none;
+         align-items:center; justify-content:center; flex-direction:column; gap:12px; border-radius:8px}
+.spinner{width:40px; height:40px; border-radius:50%; border:4px solid #e3e9f4; border-top-color:var(--gold);
+         animation:spin .9s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.overlay p{font-size:.9rem; color:var(--navy); font-weight:600}
+.toolrow{display:flex; gap:10px; align-items:center; margin-top:12px; flex-wrap:wrap}
+.toolrow .grow{flex:1}
+.result-foot{display:flex; justify-content:space-between; margin-top:12px; font-size:.78rem; color:var(--muted);
+             border-top:1px solid var(--line); padding-top:10px}
+
+/* ===== FOOTER ===== */
+footer{background:linear-gradient(180deg,var(--navy),var(--navy2)); color:#c9d7f2; text-align:center;
+       padding:14px 10px 18px; font-size:.8rem; line-height:1.7}
+footer .g{color:var(--gold)}
+
+/* ===== MODAL / TOAST ===== */
+#modal{position:fixed; inset:0; background:rgba(8,18,40,.55); display:none; align-items:center;
+       justify-content:center; padding:18px; z-index:50}
+#modal .card{background:#fff; border-radius:12px; max-width:640px; width:100%; max-height:86vh;
+             overflow:auto; padding:24px}
+#modal h2{color:var(--navy); font-size:1.15rem; margin-bottom:12px}
+#modal h3{color:var(--navy); font-size:.95rem; margin:14px 0 6px}
+#modal p,#modal li{font-size:.88rem; line-height:1.65; color:#2a3a58}
+#modal ul{margin:4px 0 0 18px}
+#modal .close{margin-top:18px; background:var(--navy); color:#fff; border:none; border-radius:8px;
+              padding:10px 20px; cursor:pointer; font-size:.9rem}
+#toast{position:fixed; left:50%; bottom:26px; transform:translateX(-50%) translateY(20px); opacity:0;
+       background:var(--navy); color:#fff; padding:11px 20px; border-radius:8px; font-size:.85rem;
+       transition:.25s; z-index:60; max-width:90vw; border-left:4px solid var(--gold)}
+#toast.show{opacity:1; transform:translateX(-50%) translateY(0)}
+#toast.err{border-left-color:var(--bad)}
+
+/* ===== RESPONSIVE ===== */
+@media (max-width:980px){
+  main{grid-template-columns:1fr}
+  .app{flex-direction:column}
+  aside{width:100%; flex-direction:row; flex-wrap:wrap; align-items:center}
+  .brand{flex:1 1 220px}
+  .badge,.side-note{display:none}
+  .sec{flex:1 1 240px; margin-top:0}
+  .logic{display:none}
+}
+@media (max-width:560px){
+  header{padding:12px 14px}
+  main{padding:12px; gap:12px}
+  .panel{padding:12px}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <div class="brand">
+     <img src="./logo.png" alt="VKS" title="VN-go (VKS)" style="width:59px;height:59px;margin:0 4px 0 8px;align-self:center;border-radius:3px">
+      <div>
+        <div class="name">Vi.<b>OCR</b></div>
+        <div class="sub">PP-OCRv5 + VietOCR</div>
+      </div>
+    </div>
+    <div class="badge">★ Chạy offline trong 1 file — không cần mạng ★</div>
+
+    <div class="sec">
+      <h3>Engine OCR</h3>
+      <label class="small" for="engine">Chế độ nhận dạng</label>
+      <select id="engine">
+        <option value="transformer">★ Transformer (chính xác nhất)</option>
+        <option value="seq2seq">Seq2Seq (nhanh hơn)</option>
+      </select>
+      <label class="small" for="clsFlag" style="display:flex;align-items:center;gap:8px;margin-top:12px;cursor:pointer">
+        <input type="checkbox" id="clsFlag" checked> Tự phát hiện &amp; xoay chữ 180°
+      </label>
+    </div>
+
+    <div class="sec">
+      <h3>Kết nối</h3>
+      <label class="small" for="addr">Địa chỉ API (cục bộ)</label>
+      <input type="text" id="addr" readonly value="đang khởi động...">
+    </div>
+
+    <div class="logic">
+      <h2>💡 Logic Engine</h2>
+      <p><b>viocr</b> chạy hoàn toàn trên máy bạn, phù hợp với tài liệu nội bộ — không gửi dữ liệu ra ngoài.</p>
+      <ul>
+        <li><b>PP-OCRv5 det:</b> phát hiện vùng chữ trong ảnh.</li>
+        <li><b>VietOCR:</b> nhận dạng dòng chữ tiếng Việt có dấu.</li>
+        <li><b>1 file exe:</b> model đã nhúng sẵn, giải nén tự động.</li>
+      </ul>
+    </div>
+    <div class="side-note">Lần chạy đầu tiên mất vài giây để giải nén model vào thư mục cache. Từ lần sau khởi động ngay.</div>
+  </aside>
+
+  <div class="right">
+    <header>
+      <div class="titles">
+        <h1><span class="star">★</span> Nhận dạng văn bản tiếng Việt với độ chính xác cao <span class="star">★</span></h1>
+        <div class="sub">Kết hợp sức mạnh PP-OCRv5 và VietOCR cho kết quả tối ưu — hoàn toàn offline</div>
+      </div>
+      <div class="status"><span class="dot" id="dot"></span><span id="statusText">Đang nạp model...</span></div>
+      <button class="btn-guide" id="btnGuide">Hướng dẫn / Giới thiệu</button>
+    </header>
+
+    <main>
+      <section class="panel">
+        <div class="panel-head">
+          <h2><b>1.</b> ẢNH ĐẦU VÀO</h2>
+          <span class="meta" id="fileMeta">Chưa chọn ảnh</span>
+        </div>
+        <div class="drop" id="drop">
+          <div class="ic">⇪</div>
+          <p>Kéo thả ảnh vào đây hoặc nhấn để chọn file</p>
+          <small>Hỗ trợ JPG, PNG, BMP, GIF — tối đa 30 MB</small>
+        </div>
+        <input type="file" id="file" accept=".png,.jpg,.jpeg,.bmp,.gif" hidden>
+        <div class="preview-wrap" id="previewWrap">
+          <img id="preview" alt="ảnh xem trước">
+          <canvas id="boxes"></canvas>
+        </div>
+        <div class="file-info" id="fileInfo" style="display:none">
+          <span id="fDim">— × — px</span>
+          <span id="fSize">— KB</span>
+        </div>
+        <div class="actions">
+          <button class="act" id="btnRun" disabled>🅆 Nhận dạng</button>
+          <button class="act btn-ghost" id="btnPick">Chọn ảnh khác</button>
+          <button class="act btn-ghost" id="btnClear">Xóa</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2><b>2.</b> KẾT QUẢ OCR</h2>
+          <span class="meta"><b id="charCount" style="color:#1d4ed8">0 ký tự</b> <span id="confAvg">• Độ tin cậy TB: —</span></span>
+        </div>
+        <div class="result-box">
+          <textarea id="result" spellcheck="false"></textarea>
+          <div class="empty" id="empty">Kết quả nhận dạng sẽ hiển thị tại đây...</div>
+          <div class="overlay" id="busyOverlay"><div class="spinner"></div><p>Đang nhận dạng...</p></div>
+        </div>
+        <div class="toolrow">
+          <button class="act btn-ghost" id="btnCopy">📋 Copy</button>
+          <button class="act btn-ghost" id="btnTxt">⬇ Tải .txt</button>
+          <span class="grow"></span>
+          <label class="meta" style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="checkbox" id="showBoxes"> Vẽ khung chữ trên ảnh
+          </label>
+        </div>
+        <div class="result-foot">
+          <span>★ Engine: <b id="engineInfo">—</b></span>
+          <span>⏱ Thời gian: <b id="timeInfo">—</b></span>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<footer>
+  © 2026 Vi.<b>OCR</b> | Bộ phận chuyển đổi số VKSND TP Đà Nẵng<br>
+  <span class="g">Phát triển bởi: Nguyễn Hữu Cường Coder | Chuyên viên Kỹ thuật Cơ yếu Cao cấp - VKSND TP Đà Nẵng</span><br>
+  Email: Doremon.dn01@gmail.com | Phone Contact: 0905 6666 24
+</footer>
+
+<div id="modal">
+  <div class="card">
+    <h2>Hướng dẫn / Giới thiệu</h2>
+    <p><b>viocr</b> là phần mềm nhận dạng văn bản tiếng Việt chạy <b>hoàn toàn offline</b>:
+    model PP-OCRv5 (phát hiện vùng chữ) và VietOCR (nhận dạng dòng chữ)  — không dùng Python và các ngôn ngữ từ AI, không cần mạng, dữ liệu không rời khỏi máy.</p>
+    <h3>Cách dùng</h3>
+    <ul>
+      <li>Kéo thả ảnh (hoặc nhấn vào khung) rồi bấm <b>Nhận dạng</b>.</li>
+      <li>Định dạng: JPG, PNG, BMP, GIF — tối đa 30 MB.</li>
+      <li><b>Transformer</b> chính xác nhất; <b>Seq2Seq</b> nhanh hơn, phù hợp ảnh rõ nét.</li>
+      <li>Bật <b>Vẽ khung chữ</b> để xem vùng chữ được phát hiện trên ảnh.</li>
+      <li>Kết quả có thể sửa trực tiếp, Copy hoặc tải về file .txt.</li>
+    </ul>
+    <h3>Chạy từ dòng lệnh (cho tệp nhiều ảnh)</h3>
+    <ul>
+      <li><code>viocr-windows-x64.exe anh1.jpg anh2.png</code> — in văn bản ra stdout.</li>
+      <li>Thêm <code>--json</code> để lấy kết quả chi tiết (khung, độ tin cậy).</li>
+    </ul>
+    <h3>Lưu ý kỹ thuật</h3>
+    <ul>
+      <li>Windows cần <b>Visual C++ Redistributable x64</b> (tải: aka.ms/vs/17/release/vc_redist.x64.exe).</li>
+      <li>Lần đầu chạy, model được giải nén vào <code>%LocalAppData%\viocr\</code>.</li>
+    </ul>
+    <button class="close" id="btnClose">Đã hiểu</button>
+  </div>
+</div>
+<div id="toast"></div>
+<button data-act="license">© Bản quyền</button>
+
+
+
+
+  
+  
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+let curFile = null, curImg = null, busyFlag = false;
+
+function toast(msg, isErr){
+  const t = $("toast");
+  t.textContent = msg;
+  t.className = "show" + (isErr ? " err" : "");
+  clearTimeout(t._h);
+  t._h = setTimeout(() => t.className = "", 3200);
+}
+
+/* ---- trạng thái model ---- */
+async function pollStatus(){
+  try{
+    const r = await fetch("/api/status");
+    const s = await r.json();
+    $("addr").value = s.addr || "http://127.0.0.1";
+    if(s.ready){
+      $("dot").className = "dot ready";
+      $("statusText").textContent = "Sẵn sàng";
+      return true;
+    }
+    if(s.error){
+      $("dot").className = "dot err";
+      $("statusText").textContent = "Lỗi nạp model";
+      toast("Lỗi nạp model: " + s.error, true);
+      return true;
+    }
+  }catch(e){}
+  return false;
+}
+(async function waitReady(){
+  for(let i = 0; i < 600; i++){
+    if(await pollStatus()) return;
+    await new Promise(r => setTimeout(r, 1000));
+  }
+})();
+
+/* ---- chọn / kéo thả ảnh ---- */
+function acceptFile(f){
+  if(!f) return;
+  if(!/\.(png|jpe?g|bmp|gif)$/i.test(f.name) && !/^image\//.test(f.type)){
+    toast("Chỉ hỗ trợ JPG, PNG, BMP, GIF.", true); return;
+  }
+  if(f.size > 30*1024*1024){
+    toast("Ảnh quá lớn (tối đa 30 MB).", true); return;
+  }
+  curFile = f;
+  const url = URL.createObjectURL(f);
+  const img = $("preview");
+  img.onload = () => {
+    $("previewWrap").style.display = "block";
+    $("fDim").textContent = img.naturalWidth + " × " + img.naturalHeight + " px";
+    $("fSize").textContent = (f.size/1024).toFixed(0) + " KB";
+    $("fileMeta").textContent = f.name;
+    $("fileInfo").style.display = "flex";
+    $("btnRun").disabled = false;
+    drawBoxes(null);
+  };
+  img.src = url;
+  curImg = img;
+}
+$("drop").addEventListener("click", () => $("file").click());
+$("btnPick").addEventListener("click", () => $("file").click());
+$("file").addEventListener("change", e => acceptFile(e.target.files[0]));
+["dragover","dragenter"].forEach(ev => $("drop").addEventListener(ev, e => {
+  e.preventDefault(); $("drop").classList.add("over");
+}));
+["dragleave","drop"].forEach(ev => $("drop").addEventListener(ev, e => {
+  e.preventDefault(); $("drop").classList.remove("over");
+}));
+$("drop").addEventListener("drop", e => acceptFile(e.dataTransfer.files[0]));
+$("btnClear").addEventListener("click", () => {
+  curFile = null;
+  $("previewWrap").style.display = "none";
+  $("fileInfo").style.display = "none";
+  $("fileMeta").textContent = "Chưa chọn ảnh";
+  $("btnRun").disabled = true;
+  $("result").value = ""; $("empty").style.display = "flex";
+  $("charCount").textContent = "0 ký tự";
+  $("confAvg").textContent = "• Độ tin cậy TB: —";
+  $("engineInfo").textContent = "—"; $("timeInfo").textContent = "—";
+});
+$("showBoxes").addEventListener("change", () => drawBoxes(lastResult));
+
+/* ---- vẽ khung chữ ---- */
+let lastResult = null;
+function drawBoxes(res){
+  const cv = $("boxes"), img = $("preview");
+  if(!res || !$("showBoxes").checked || !img.naturalWidth){
+    cv.width = 0; return;
+  }
+  cv.width = img.clientWidth; cv.height = img.clientHeight;
+  const ctx = cv.getContext("2d");
+  const sx = cv.width / img.naturalWidth, sy = cv.height / img.naturalHeight;
+  // ảnh object-fit:contain — tính vùng hiển thị thực để khung khớp vị trí
+  const s = Math.min(sx, sy);
+  const ox = (cv.width - img.naturalWidth * s) / 2;
+  const oy = (cv.height - img.naturalHeight * s) / 2;
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  for(const item of (res.results || [])){
+    ctx.beginPath();
+    item.box.forEach((pt, i) => {
+      const x = ox + pt[0]*s, y = oy + pt[1]*s;
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    });
+    ctx.closePath();
+    ctx.fillStyle = "rgba(240,180,28,.18)";
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "#f0b41c";
+    ctx.stroke();
+  }
+}
+window.addEventListener("resize", () => drawBoxes(lastResult));
+
+/* ---- chạy nhận dạng ---- */
+$("btnRun").addEventListener("click", async () => {
+  if(!curFile || busyFlag) return;
+  busyFlag = true;
+  $("btnRun").disabled = true;
+  $("busyOverlay").style.display = "flex";
+  try{
+    const fd = new FormData();
+    fd.append("file", curFile);
+    fd.append("engine", $("engine").value);
+    fd.append("cls", $("clsFlag").checked ? "1" : "0");
+    const r = await fetch("/api/ocr", {method: "POST", body: fd});
+    const text = await r.text();
+    let data;
+    try{ data = JSON.parse(text); }catch(_){ throw new Error(text || ("HTTP " + r.status)); }
+    if(!r.ok) throw new Error(data.error || "HTTP " + r.status);
+    lastResult = data;
+    const lines = data.lines || [];
+    $("result").value = lines.join("\n");
+    $("empty").style.display = lines.length ? "none" : "flex";
+    $("charCount").textContent = lines.join("\n").length + " ký tự";
+    const rs = data.results || [];
+    const conf = rs.length ? rs.reduce((a, b) => a + (b.conf || 0), 0) / rs.length : null;
+    $("confAvg").textContent = conf !== null
+      ? "• Độ tin cậy TB: " + (conf*100).toFixed(1) + "%" : "• Độ tin cậy TB: —";
+    $("engineInfo").textContent = $("engine").value === "seq2seq" ? "Seq2Seq" : "Transformer";
+    $("timeInfo").textContent = (data.ms/1000).toFixed(2) + " s";
+    drawBoxes(data);
+    toast(lines.length ? "Nhận dạng xong: " + lines.length + " dòng." : "Không tìm thấy vùng chữ nào.");
+  }catch(err){
+    toast("Lỗi: " + err.message, true);
+  }finally{
+    busyFlag = false;
+    $("btnRun").disabled = !curFile;
+    $("busyOverlay").style.display = "none";
+  }
+});
+
+/* ---- tiện ích kết quả ---- */
+$("result").addEventListener("input", () => {
+  $("empty").style.display = $("result").value ? "none" : "flex";
+  $("charCount").textContent = $("result").value.length + " ký tự";
+});
+$("btnCopy").addEventListener("click", async () => {
+  const v = $("result").value;
+  if(!v){ toast("Chưa có kết quả để copy.", true); return; }
+  try{ await navigator.clipboard.writeText(v); toast("Đã copy vào clipboard."); }
+  catch(_){ $("result").select(); document.execCommand("copy"); toast("Đã copy vào clipboard."); }
+});
+$("btnTxt").addEventListener("click", () => {
+  const v = $("result").value;
+  if(!v){ toast("Chưa có kết quả để tải.", true); return; }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([v], {type: "text/plain;charset=utf-8"}));
+  a.download = (curFile ? curFile.name.replace(/\.[^.]+$/, "") : "ketqua") + ".txt";
+  a.click();
+});
+
+/* ---- modal hướng dẫn ---- */
+$("btnGuide").addEventListener("click", () => $("modal").style.display = "flex");
+$("btnClose").addEventListener("click", () => $("modal").style.display = "none");
+$("modal").addEventListener("click", e => { if(e.target === $("modal")) $("modal").style.display = "none"; });
+</script>
+</body>
+</html>
+
+
+

@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	ort "github.com/yalue/onnxruntime_go"
@@ -49,21 +50,28 @@ func main() {
 		flagThreads   = flag.Int("threads", 0, "số thread ONNX Runtime (0 = mặc định)")
 		flagQuiet     = flag.Bool("quiet", false, "không in log ra stderr")
 		flagVersion   = flag.Bool("version", false, "in phiên bản")
+		flagGUI       = flag.Bool("gui", false, "mở giao diện đồ họa (kể cả khi có ảnh)")
+		flagPort      = flag.Int("port", 0, "cổng server giao diện (0 = chọn cổng tự do)")
+		flagNoBrowser = flag.Bool("no-browser", false, "không tự mở trình duyệt")
 	)
 	flag.Parse()
 	if *flagVersion {
 		fmt.Println("viocr", appVersion)
 		return
 	}
-	files := flag.Args()
-	if len(files) == 0 {
-		fmt.Fprintln(os.Stderr, "Cách dùng: viocr [flags] ảnh1 [ảnh2 ...]  (xem --help)")
-		fmt.Fprintln(os.Stderr, "Ví dụ: viocr-windows-x64.exe anh.jpg   — không có ảnh sẽ chỉ hiện hướng dẫn rồi thoát.")
-		pauseIfInteractive()
-		os.Exit(2)
+	if *flagGUI || len(flag.Args()) == 0 {
+		// Chế độ giao diện đồ họa: server cục bộ + trình duyệt, chạy tới Ctrl+C.
+		if err := runGUI(*flagPort, !*flagNoBrowser); err != nil {
+			fmt.Fprintln(os.Stderr, "viocr: không mở được giao diện:", err)
+			pauseIfInteractive()
+			os.Exit(1)
+		}
+		return
 	}
+	files := flag.Args()
 	if *flagEngine != "transformer" && *flagEngine != "seq2seq" {
 		fmt.Fprintln(os.Stderr, "--rec-engine phải là transformer hoặc seq2seq")
+		pauseIfInteractive()
 		os.Exit(2)
 	}
 	maxSeqLen = *flagMaxLen
@@ -89,7 +97,13 @@ func main() {
 
 	exitCode := 0
 	for i, path := range files {
-		res, err := processImage(engine, detP, path, *flagEngine, !*flagNoCls)
+		img, err := LoadImage(path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "viocr: lỗi %s: %v\n", path, err)
+			exitCode = 1
+			continue
+		}
+		res, err := processImage(engine, detP, img, filepath.Base(path), *flagEngine, !*flagNoCls)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "viocr: lỗi %s: %v\n", path, err)
 			exitCode = 1
@@ -128,14 +142,10 @@ func pauseIfInteractive() {
 	bufio.NewReader(os.Stdin).ReadBytes('\n')
 }
 
-// processImage chạy trọn pipeline cho 1 ảnh.
-func processImage(e *Engine, p *DetParams, path, engineName string, useCls bool) (*imageResult, error) {
+// processImage chạy trọn pipeline cho 1 ảnh (img đã nạp sẵn; name chỉ để hiển thị).
+func processImage(e *Engine, p *DetParams, img *RGB, name, engineName string, useCls bool) (*imageResult, error) {
 	start := time.Now()
-	img, err := LoadImage(path)
-	if err != nil {
-		return nil, err
-	}
-	res := &imageResult{File: path, Width: img.W, Height: img.H, Lines: []string{}, Results: []LineResult{}}
+	res := &imageResult{File: name, Width: img.W, Height: img.H, Lines: []string{}, Results: []LineResult{}}
 
 	// 1) detection
 	x, nh, nw := DetPreprocess(img, p)

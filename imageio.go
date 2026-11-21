@@ -4,14 +4,14 @@ package main
 // (chuẩn cv2 INTER_LINEAR cho det) và Lanczos3 separable (chuẩn PIL cho rec).
 
 import (
+	"bytes"
 	"image"
 	"image/gif"
 	"image/jpeg"
 	"image/png"
+	"io"
 	"math"
 	"os"
-	"path/filepath"
-	"strings"
 
 	"golang.org/x/image/bmp"
 )
@@ -24,37 +24,25 @@ type RGB struct {
 
 // LoadImage đọc file ảnh thành RGB.
 func LoadImage(path string) (*RGB, error) {
-	f, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	return LoadImageBytes(data)
+}
+
+// LoadImageBytes giải mã ảnh từ bộ nhớ (png/jpeg/bmp/gif), dùng cho CLI và GUI.
+func LoadImageBytes(data []byte) (*RGB, error) {
 	var img image.Image
-	ext := strings.ToLower(filepath.Ext(path))
-	switch ext {
-	case ".png":
-		img, err = png.Decode(f)
-	case ".jpg", ".jpeg":
-		img, err = jpeg.Decode(f)
-	case ".gif":
-		img, err = gif.Decode(f)
-	case ".bmp":
-		img, err = bmp.Decode(f)
-	default:
-		img, err = png.Decode(f)
-		if err != nil {
-			f.Seek(0, 0)
-			img, err = jpeg.Decode(f)
-		}
-		if err != nil {
-			f.Seek(0, 0)
-			img, err = bmp.Decode(f)
-		}
+	var err error
+	try := func(fn func(io.Reader) (image.Image, error)) bool {
+		img, err = fn(bytes.NewReader(data))
+		return err == nil
 	}
-	if err != nil {
-		return nil, err
+	if try(png.Decode) || try(jpeg.Decode) || try(bmp.Decode) || try(gif.Decode) {
+		return imageToRGB(img), nil
 	}
-	return imageToRGB(img), nil
+	return nil, err
 }
 
 func imageToRGB(img image.Image) *RGB {

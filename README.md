@@ -9,7 +9,26 @@ không cần cài Python, không cần tải model, **không cần mạng** — 
 - Pipeline và tham số được nghiên cứu/không sai khác từ: RapidOCR, RAGFlow
   DeepDoc, deepdoc_vietocr, pbcquoc/vietocr (chi tiết: [`docs/RESEARCH.md`](docs/RESEARCH.md))
 
-## Cách dùng (Windows & Linux giống hệt nhau)
+## Giao diện đồ họa (từ bản 1.1.0)
+
+**Nhấp đúp exe (hoặc chạy không kèm ảnh) là mở giao diện ngay**: exe nhúng sẵn
+một trang web cục bộ, tự mở trình duyệt tại `http://127.0.0.1:<cổng>` — kéo thả
+ảnh vào, bấm **Nhận dạng**, xem kết quả kèm độ tin cậy, vẽ khung chữ trên ảnh,
+Copy hoặc tải file `.txt`. Toàn bộ chạy offline trên máy, dữ liệu không rời khỏi
+máy. Giao diện làm theo phong cách dashboard quản trị: sidebar xanh navy + điểm
+nhấn vàng, 2 panel "Ảnh đầu vào" / "Kết quả OCR", responsive cả điện thoại.
+
+- Server chỉ lắng nghe `127.0.0.1` (không mở ra mạng LAN).
+- Model nạp nền ngay khi mở trang; thanh trạng thái chuyển **Sẵn sàng** (xanh)
+  khi dùng được (lần đầu mất vài giây để giải nén model).
+
+| Flag giao diện | Ý nghĩa |
+|---|---|
+| `--gui` | Mở giao diện kể cả khi có truyền ảnh |
+| `--port N` | Chọn cổng server (mặc định: cổng tự do) |
+| `--no-browser` | Chạy server nhưng không tự mở trình duyệt |
+
+## Cách dùng dòng lệnh (Windows & Linux giống hệt nhau)
 
 ```
 viocr-windows-x64.exe [flags] anh1.jpg [anh2.png ...]
@@ -36,25 +55,25 @@ viocr-windows-x64.exe [flags] anh1.jpg [anh2.png ...]
 | `--quiet` | tắt | Không in banner stderr |
 
 Lần chạy đầu tiên, binary giải nén model vào thư mục cache rồi mọi lần sau dùng lại:
-- Windows: `%LocalAppData%\viocr\1.0.0\`
-- Linux: `~/.cache/viocr/1.0.0/`
+- Windows: `%LocalAppData%\viocr\1.1.0\`
+- Linux: `~/.cache/viocr/1.1.0/`
 
 ## Chạy trên Windows: yêu cầu & lỗi thường gặp
 
-- **Yêu cầu bắt buộc: Microsoft Visual C++ Redistributable (bản x64)** —
+- **Cần Visual C++ Redistributable (bản x64)** —
   `onnxruntime.dll` phụ thuộc `MSVCP140.dll` / `VCRUNTIME140.dll` vốn KHÔNG có
   sẵn trong Windows. Nếu chạy lên là console nháy rồi tắt, hãy tải và cài bản
   x64 tại: https://aka.ms/vs/17/release/vc_redist.x64.exe (máy đã cài qua game
   hoặc phần mềm khác thường có sẵn, có thể bỏ qua). Chỉ cần cài một lần.
-- **Đừng chỉ nhấp đúp exe** — nhấp đúp không kèm ảnh sẽ chỉ hiện hướng dẫn.
-  Mở `cmd`/`PowerShell` trong thư mục chứa exe rồi chạy kèm ảnh:
+- **Nhấp đúp exe → mở giao diện đồ họa trong trình duyệt** (từ bản 1.1.0).
+  Không cần vào cmd; muốn dùng dòng lệnh (xử lý nhiều ảnh, xuất JSON) thì mở
+  `cmd`/`PowerShell` rồi chạy kèm ảnh:
   ```powershell
   .\viocr-windows-x64.exe anh.jpg
   .\viocr-windows-x64.exe --json scan.png
   ```
-- Từ bản v1.0.1: khi chạy tương tác (nhấp đúp), chương trình **chờ Enter trước
-  khi thoát** ở màn hình hướng dẫn và khi gặp lỗi — nên luôn đọc được thông báo.
-  Nếu vẫn cần giữ cửa sổ, chạy từ cmd như trên.
+- Khi chạy tương tác (nhấp đúp), nếu gặp lỗi chương trình **chờ Enter trước khi
+  thoát** — luôn đọc được thông báo.
 - Dung lượng ~259 MB hiển thị trong Windows Explorer = 272.001.536 bytes
   (Explorer tính theo đơn vị MiB) — file đúng nguyên vẹn.
 
@@ -132,6 +151,8 @@ go build -trimpath -ldflags "-s -w" -o viocr .
 | File | Nội dung |
 |---|---|
 | `main.go` | CLI, pipeline từng ảnh, crop dọc thử 3 hướng (DeepDoc) |
+| `webui.go` | Giao diện đồ họa: server cục bộ `127.0.0.1`, API `/api/ocr`, tự mở trình duyệt |
+| `ui/index.html` | Trang giao diện nhúng trong exe (HTML/CSS/JS tự chứa, offline 100%) |
 | `models.go` | `go:embed` model + giải nén vào cache khi chạy |
 | `runtime_linux.go` / `runtime_win.go` | Nhúng `libonnxruntime.so` / `onnxruntime.dll` theo OS |
 | `ort.go` | Khởi tạo ONNX Runtime, session, vocab 233 ký tự |
