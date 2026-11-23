@@ -7,6 +7,7 @@ package main
 
 import (
 	"math"
+	"strings"
 
 	ort "github.com/yalue/onnxruntime_go"
 )
@@ -14,11 +15,14 @@ import (
 const (
 	recImgH  = 32
 	recMinW  = 32
-	recMaxW  = 512
 	recRound = 10
 	sosToken = 1
 	eosToken = 2
 )
+
+// recMaxW cận rộng tensor rec — đặt qua --rec-max-w (512 chuẩn VietOCR;
+// 768-1024 giữ chi tiết dòng dài).
+var recMaxW = 512
 
 // maxSeqLen số bước decode tối đa (đặt qua --max-len).
 var maxSeqLen = 128
@@ -83,7 +87,13 @@ func (e *Engine) RecTransformer(crop *RGB) (string, float64, error) {
 	tgt := []int64{sosToken}
 	var ids []int
 	var probs []float64
-	for step := 0; step < maxSeqLen; step++ {
+	// chặn chiều dài decode theo độ dài feature (memLen/2 ký tự tối đa hợp lý)
+	// — cắt các đuôi "ảo giác" khi decoder mất kiểm soát trên ảnh nhiễu.
+	maxSteps := maxSeqLen
+	if m := int(memLen)/2 + 6; m < maxSteps {
+		maxSteps = m
+	}
+	for step := 0; step < maxSteps; step++ {
 		tgtTensor, err := ort.NewTensor(ort.NewShape(int64(len(tgt)), 1), tgt)
 		if err != nil {
 			return "", 0, err
@@ -147,7 +157,11 @@ func (e *Engine) RecSeq2Seq(crop *RGB) (string, float64, error) {
 	var ids []int
 	var probs []float64
 	last := int64(sosToken)
-	for step := 0; step < maxSeqLen; step++ {
+	maxSteps := maxSeqLen
+	if m := int(t)/2 + 6; m < maxSteps {
+		maxSteps = m
+	}
+	for step := 0; step < maxSteps; step++ {
 		tgtTensor, err := ort.NewTensor(ort.NewShape(1), []int64{last})
 		if err != nil {
 			return "", 0, err
@@ -196,7 +210,55 @@ func (e *Engine) decode(ids []int, probs []float64) (string, float64) {
 	if n > 0 {
 		conf = sum / float64(n)
 	}
+	out = trimHallucination(out)
 	return out, conf
+}
+
+// trimHallucination cắt các đuôi lặp do decoder mất kiểm soát trên ảnh nhiễu:
+// từ cuối lặp 2 lần liên tiếp ("... Khê Khê" → "... Khê") và ký tự cuối lặp
+// ≥3 lần ("...18 18" đã xử lý ở vế từ; "...!!!" → "...!"). Chỉ cắt 1 lần để
+// tránh phá văn bản thật có lặp hợp lệ.
+func trimHallucination(s string) string {
+	// từ cuối lặp liên tiếp
+	w := strings.Fields(s)
+	cut := 0
+	for len(w)-cut >= 4 && w[len(w)-1-cut] == w[len(w)-2-cut] {
+		cut++
+	}
+	if cut > 0 {
+		w = w[:len(w)-cut]
+		s = strings.Join(w, " ")
+	}
+	// ký tự cuối lặp ≥3 lần
+	r := []rune(s)
+	for len(r) >= 3 && r[len(r)-1] == r[len(r)-2] && r[len(r)-1] == r[len(r)-3] {
+		r = r[:len(r)-1]
+	}
+	return string(r)
+}
+
+// normalizeContrast kéo giãn toàn bộ dải sáng của crop — giúp crop mờ/nén
+// JPEG/scan nhạt có tương phản chuẩn trước khi đưa vào rec.
+func normalizeContrast(c *RGB) *RGB {
+	lo, hi := 255, 0
+	for i := 0; i < len(c.Data); i++ {
+		v := int(c.Data[i])
+		if v < lo {
+			lo = v
+		}
+		if v > hi {
+			hi = v
+		}
+	}
+	if hi-lo < 10 || (lo == 0 && hi == 255) {
+		return c
+	}
+	scale := 255.0 / float64(hi-lo)
+	out := &RGB{W: c.W, H: c.H, Data: make([]uint8, len(c.Data))}
+	for i, v := range c.Data {
+		out.Data[i] = uint8(clampU8(float64(int(v)-lo)*scale + 0.5))
+	}
+	return out
 }
 
 func argmaxSoftmax(v []float32) (int, float64) {

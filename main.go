@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	ort "github.com/yalue/onnxruntime_go"
@@ -38,7 +39,7 @@ func main() {
 
 	var (
 		flagJSON      = flag.Bool("json", false, "xuất kết quả dạng JSON (mỗi ảnh 1 dòng)")
-		flagEngine    = flag.String("rec-engine", "transformer", "engine nhận dạng: transformer | seq2seq")
+		flagEngine    = flag.String("rec-engine", "seq2seq", "engine nhận dạng: seq2seq (mặc định) | transformer")
 		flagDetSide   = flag.Int("det-side", 960, "cận resize det (pixel)")
 		flagDetType   = flag.String("det-type", "max", "kiểu cận det: max | min")
 		flagDetThresh = flag.Float64("det-thresh", 0.3, "ngưỡng nhị phân DBNet")
@@ -46,6 +47,7 @@ func main() {
 		flagUnclip    = flag.Float64("unclip", 1.6, "hệ số mở rộng box (unclip)")
 		flagMinSize   = flag.Int("min-size", 3, "kích thước box nhỏ nhất (pixel)")
 		flagMaxLen    = flag.Int("max-len", 128, "số bước decode tối đa")
+		flagRecMaxW   = flag.Int("rec-max-w", 512, "cận rộng tensor rec (pixel — tăng cho dòng dài)")
 		flagNoCls     = flag.Bool("no-cls", false, "tắt phân loại hướng 180°")
 		flagThreads   = flag.Int("threads", 0, "số thread ONNX Runtime (0 = mặc định)")
 		flagQuiet     = flag.Bool("quiet", false, "không in log ra stderr")
@@ -53,11 +55,32 @@ func main() {
 		flagGUI       = flag.Bool("gui", false, "mở giao diện đồ họa (kể cả khi có ảnh)")
 		flagPort      = flag.Int("port", 0, "cổng server giao diện (0 = chọn cổng tự do)")
 		flagNoBrowser = flag.Bool("no-browser", false, "không tự mở trình duyệt")
+		// ── v3.0: đường Text + xuất Word + bench ──
+		flagPDFText     = flag.String("pdf-text", "", "trích LỚP CHỮ của file PDF (không OCR, không cần model): in văn bản ra stdout")
+		flagDocx        = flag.String("docx", "", "xuất file Word .docx từ kết quả (đi cùng --pdf-text hoặc ảnh/PDF đầu vào)")
+		flagLDMJSON     = flag.String("json-ldm", "", "ghi Logical Document Model (JSON) ra file")
+		flagBench       = flag.String("bench", "", "chạy bench trên thư mục có gold/ + out/ (in CER/WER/TS/LFS)")
+		flagNoCorrect   = flag.Bool("no-correct", false, "tắt hiệu chỉnh tiếng Việt (M4)")
+		flagNoPageBreak = flag.Bool("no-pagebreak", false, "không chèn ngắt trang trong file Word")
 	)
 	flag.Parse()
 	if *flagVersion {
 		fmt.Println("viocr", appVersion)
 		return
+	}
+	doCorrect := !*flagNoCorrect
+	pageBreaks := !*flagNoPageBreak
+	// ── v3.0: bench không cần model ──
+	if *flagBench != "" {
+		if err := runBenchDir(*flagBench); err != nil {
+			fmt.Fprintln(os.Stderr, "viocr:", err)
+			os.Exit(2)
+		}
+		return
+	}
+	// ── v3.0: đường Text thuần (--pdf-text) — không cần model ──
+	if *flagPDFText != "" {
+		os.Exit(runPDFTextCLI(*flagPDFText, *flagDocx, *flagLDMJSON, doCorrect, pageBreaks, *flagQuiet))
 	}
 	if *flagGUI || len(flag.Args()) == 0 {
 		// Chế độ giao diện đồ họa: server cục bộ + trình duyệt, chạy tới Ctrl+C.
@@ -75,6 +98,7 @@ func main() {
 		os.Exit(2)
 	}
 	maxSeqLen = *flagMaxLen
+	recMaxW = *flagRecMaxW
 
 	assetDir, err := InitRuntime()
 	if err != nil {
@@ -96,7 +120,48 @@ func main() {
 	}
 
 	exitCode := 0
+	var ldmPages []*imageResult
+	var ldmNames []string
 	for i, path := range files {
+		// ── v3.0: file PDF truyền thẳng vào CLI → đường Text (không OCR) ──
+		if strings.EqualFold(filepath.Ext(path), ".pdf") {
+			pdfData, err := os.ReadFile(path)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "viocr: lỗi %s: %v\n", path, err)
+				exitCode = 1
+				continue
+			}
+			doc, err := buildLDMFromPDFBytes(filepath.Base(path), pdfData, doCorrect)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "viocr: lỗi %s: %v\n", path, err)
+				exitCode = 1
+				continue
+			}
+			if *flagDocx != "" {
+				if err := WriteDocx(doc, *flagDocx, pageBreaks); err != nil {
+					fmt.Fprintf(os.Stderr, "viocr: lỗi xuất Word %s: %v\n", *flagDocx, err)
+					exitCode = 1
+				} else if !*flagQuiet {
+					fmt.Fprintf(os.Stderr, "viocr: đã xuất %s (%d trang, %d chỗ hiệu chỉnh)\n",
+						*flagDocx, len(doc.Pages), len(doc.Corrections))
+				}
+			}
+			if *flagLDMJSON != "" {
+				if err := doc.SaveJSON(*flagLDMJSON); err != nil {
+					fmt.Fprintf(os.Stderr, "viocr: lỗi ghi LDM %s: %v\n", *flagLDMJSON, err)
+					exitCode = 1
+				}
+			}
+			for _, p := range doc.Pages {
+				if p.NeedsOCR && !*flagQuiet {
+					fmt.Fprintf(os.Stderr, "viocr: trang %d của %s là scan/chữ giả — dùng GUI để OCR trang này\n", p.Index, filepath.Base(path))
+				}
+			}
+			if !*flagJSON {
+				fmt.Print(doc.PlainText())
+			}
+			continue
+		}
 		img, err := LoadImage(path)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "viocr: lỗi %s: %v\n", path, err)
@@ -109,6 +174,8 @@ func main() {
 			exitCode = 1
 			continue
 		}
+		ldmPages = append(ldmPages, res)
+		ldmNames = append(ldmNames, filepath.Base(path))
 		if *flagJSON {
 			b, _ := json.Marshal(res)
 			fmt.Println(string(b))
@@ -118,6 +185,23 @@ func main() {
 			}
 			if i < len(files)-1 {
 				fmt.Println()
+			}
+		}
+	}
+	// ── v3.0: xuất Word từ kết quả OCR ảnh ──
+	if *flagDocx != "" && len(ldmPages) > 0 {
+		doc := buildLDMFromImageResults(strings.Join(ldmNames, ", "), ldmPages, doCorrect)
+		if err := WriteDocx(doc, *flagDocx, pageBreaks); err != nil {
+			fmt.Fprintf(os.Stderr, "viocr: lỗi xuất Word %s: %v\n", *flagDocx, err)
+			exitCode = 1
+		} else if !*flagQuiet {
+			fmt.Fprintf(os.Stderr, "viocr: đã xuất %s (%d trang, %d chỗ hiệu chỉnh)\n",
+				*flagDocx, len(doc.Pages), len(doc.Corrections))
+		}
+		if *flagLDMJSON != "" {
+			if err := doc.SaveJSON(*flagLDMJSON); err != nil {
+				fmt.Fprintf(os.Stderr, "viocr: lỗi ghi LDM %s: %v\n", *flagLDMJSON, err)
+				exitCode = 1
 			}
 		}
 	}
@@ -231,5 +315,14 @@ func (e *Engine) recBest(crop *RGB, engineName string, useCls bool) (string, flo
 			crop = Rotate180(crop)
 		}
 	}
-	return recOne(crop)
+	txt, cf, err := recOne(crop)
+	if err != nil || cf >= 0.6 {
+		return txt, cf, err
+	}
+	// conf thấp → thử lại với crop tăng tương phản (scan nhạt, JPEG nén)
+	txt2, cf2, err2 := recOne(normalizeContrast(crop))
+	if err2 == nil && cf2 > cf {
+		return txt2, cf2, nil
+	}
+	return txt, cf, err
 }

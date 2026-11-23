@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Viocr — Nhận dạng văn bản tiếng Việt (offline)</title>
+<title>viocr — Nhận dạng văn bản tiếng Việt (offline)</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='30' fill='%23123061' stroke='%23f0b41c' stroke-width='2.5'/%3E%3Cpath d='M32 14l5.2 10.9 12 1.6-8.8 8.3 2.2 11.8L32 40.9l-10.6 5.7 2.2-11.8-8.8-8.3 12-1.6z' fill='%23f0b41c'/%3E%3C/svg%3E">
 <style>
 :root{
   --navy:#0b2047; --navy2:#0a1c3e; --navy3:#123061;
@@ -146,9 +147,13 @@ footer .g{color:var(--gold)}
 <div class="app">
   <aside>
     <div class="brand">
-     <img src="./logo.png" alt="VKS" title="VN-go (VKS)" style="width:59px;height:59px;margin:0 4px 0 8px;align-self:center;border-radius:3px">
+      <svg viewBox="0 0 64 64" aria-hidden="true">
+        <circle cx="32" cy="32" r="30" fill="#123061" stroke="#f0b41c" stroke-width="2.5"/>
+        <circle cx="32" cy="32" r="24" fill="none" stroke="#f0b41c" stroke-width="1" opacity=".5"/>
+        <path d="M32 14l5.2 10.9 12 1.6-8.8 8.3 2.2 11.8L32 40.9l-10.6 5.7 2.2-11.8-8.8-8.3 12-1.6z" fill="#f0b41c"/>
+      </svg>
       <div>
-        <div class="name">Vi.<b>OCR</b></div>
+        <div class="name">viocr <b>OCR</b></div>
         <div class="sub">PP-OCRv5 + VietOCR</div>
       </div>
     </div>
@@ -158,12 +163,22 @@ footer .g{color:var(--gold)}
       <h3>Engine OCR</h3>
       <label class="small" for="engine">Chế độ nhận dạng</label>
       <select id="engine">
-        <option value="transformer">★ Transformer (chính xác nhất)</option>
-        <option value="seq2seq">Seq2Seq (nhanh hơn)</option>
+        <option value="seq2seq" selected>★ Seq2Seq (mặc định — nhanh, ổn định)</option>
+        <option value="transformer">Transformer (chậm hơn, thử nghiệm)</option>
       </select>
       <label class="small" for="clsFlag" style="display:flex;align-items:center;gap:8px;margin-top:12px;cursor:pointer">
         <input type="checkbox" id="clsFlag" checked> Tự phát hiện &amp; xoay chữ 180°
       </label>
+    </div>
+
+    <div class="sec">
+      <h3>Đường Text &amp; Word (v3)</h3>
+      <label class="small" for="useTextLayer" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="useTextLayer" checked> Ưu tiên lớp chữ PDF
+      </label>
+      <p style="font-size:.72rem;color:#9db1d6;line-height:1.5;margin-top:6px">
+        Trang PDF sinh từ Word sẽ đọc trực tiếp lớp chữ (nhanh, chính xác),
+        chỉ trang scan mới OCR. Kết quả xuất được file Word giữ định dạng.</p>
     </div>
 
     <div class="sec">
@@ -179,6 +194,8 @@ footer .g{color:var(--gold)}
         <li><b>PP-OCRv5 det:</b> phát hiện vùng chữ trong ảnh.</li>
         <li><b>VietOCR:</b> nhận dạng dòng chữ tiếng Việt có dấu.</li>
         <li><b>1 file exe:</b> model đã nhúng sẵn, giải nén tự động.</li>
+        <li><b>Đường Text (v3):</b> PDF có lớp chữ → đọc trực tiếp, CER ≈ 0.</li>
+        <li><b>Xuất Word (v3):</b> giữ khối, đề mục, bảng theo LDM.</li>
       </ul>
     </div>
     <div class="side-note">Lần chạy đầu tiên mất vài giây để giải nén model vào thư mục cache. Từ lần sau khởi động ngay.</div>
@@ -202,8 +219,8 @@ footer .g{color:var(--gold)}
         </div>
         <div class="drop" id="drop">
           <div class="ic">⇪</div>
-          <p>Kéo thả ảnh vào đây hoặc nhấn để chọn file</p>
-          <small>Hỗ trợ JPG, PNG, BMP, GIF — tối đa 30 MB</small>
+          <p>Kéo thả ảnh hoặc PDF vào đây, hoặc nhấn để chọn file</p>
+          <small>Hỗ trợ JPG, PNG, BMP, GIF, PDF — PDF tối đa 60 MB</small>
         </div>
         <input type="file" id="file" accept=".png,.jpg,.jpeg,.bmp,.gif" hidden>
         <div class="preview-wrap" id="previewWrap">
@@ -234,6 +251,8 @@ footer .g{color:var(--gold)}
         <div class="toolrow">
           <button class="act btn-ghost" id="btnCopy">📋 Copy</button>
           <button class="act btn-ghost" id="btnTxt">⬇ Tải .txt</button>
+          <button class="act btn-ghost" id="btnWord" style="display:none">📝 Xuất Word (.docx)</button>
+          <button class="act btn-ghost" id="btnCorr" style="display:none">🔁 Chỗ đã sửa (<b id="corrCount">0</b>)</button>
           <span class="grow"></span>
           <label class="meta" style="display:flex;align-items:center;gap:6px;cursor:pointer">
             <input type="checkbox" id="showBoxes"> Vẽ khung chữ trên ảnh
@@ -249,23 +268,29 @@ footer .g{color:var(--gold)}
 </div>
 
 <footer>
-  © 2026 Vi.<b>OCR</b> | Bộ phận chuyển đổi số VKSND TP Đà Nẵng<br>
-  <span class="g">Phát triển bởi: Nguyễn Hữu Cường Coder | Chuyên viên Kỹ thuật Cơ yếu Cao cấp - VKSND TP Đà Nẵng</span><br>
-  Email: Doremon.dn01@gmail.com | Phone Contact: 0905 6666 24
+  © 2026 viocr | Bộ phận chuyển đổi số VKSND TP Đà Nẵng<br>
+  <span class="g">Phát triển bởi | Cơ yếu - CNTT VKSND TP Đà Nẵng</span><br>
+  Email: Doremon.dn01@gmail.com
 </footer>
 
 <div id="modal">
   <div class="card">
     <h2>Hướng dẫn / Giới thiệu</h2>
     <p><b>viocr</b> là phần mềm nhận dạng văn bản tiếng Việt chạy <b>hoàn toàn offline</b>:
-    model PP-OCRv5 (phát hiện vùng chữ) và VietOCR (nhận dạng dòng chữ)  — không dùng Python và các ngôn ngữ từ AI, không cần mạng, dữ liệu không rời khỏi máy.</p>
+    model PP-OCRv5 (phát hiện vùng chữ) và VietOCR (nhận dạng dòng chữ) đã được nhúng
+    trong 1 file exe — không cần cài Python, không cần mạng, dữ liệu không rời khỏi máy.</p>
     <h3>Cách dùng</h3>
     <ul>
-      <li>Kéo thả ảnh (hoặc nhấn vào khung) rồi bấm <b>Nhận dạng</b>.</li>
-      <li>Định dạng: JPG, PNG, BMP, GIF — tối đa 30 MB.</li>
-      <li><b>Transformer</b> chính xác nhất; <b>Seq2Seq</b> nhanh hơn, phù hợp ảnh rõ nét.</li>
+      <li>Kéo thả <b>ảnh hoặc file PDF</b> (hoặc nhấn vào khung) rồi bấm <b>Nhận dạng</b>.</li>
+      <li>Định dạng: JPG, PNG, BMP, GIF (tối đa 30 MB); PDF tối đa 60 MB — trang
+          PDF có lớp chữ (sinh từ Word) được <b>đọc trực tiếp, không OCR</b> —
+          nhanh và chính xác; chỉ trang scan mới OCR.</li>
+      <li><b>Xuất Word (.docx):</b> sau khi nhận dạng, bấm 📝 <b>Xuất Word</b> để
+          tải file giữ khối, đề mục, bảng (v3).</li>
+      <li><b>Chỗ đã sửa:</b> bộ hiệu chỉnh tiếng Việt chỉ sửa âm tiết vô nghĩa và
+          ghi log toàn bộ — bấm 🔁 để xem lại từng chỗ (v3).</li>
       <li>Bật <b>Vẽ khung chữ</b> để xem vùng chữ được phát hiện trên ảnh.</li>
-      <li>Kết quả có thể sửa trực tiếp, Copy hoặc tải về file .txt.</li>
+      <li>Kết quả có thể sửa trực tiếp, Copy, tải .txt hoặc xuất Word.</li>
     </ul>
     <h3>Chạy từ dòng lệnh (cho tệp nhiều ảnh)</h3>
     <ul>
@@ -277,21 +302,24 @@ footer .g{color:var(--gold)}
       <li>Windows cần <b>Visual C++ Redistributable x64</b> (tải: aka.ms/vs/17/release/vc_redist.x64.exe).</li>
       <li>Lần đầu chạy, model được giải nén vào <code>%LocalAppData%\viocr\</code>.</li>
     </ul>
-    <button class="close" id="btnClose">Đã hiểu</button>
+    <h3>Chỗ đã sửa bởi bộ hiệu chỉnh tiếng Việt</h3>
+  <div id="corrSec" style="display:none">
+    <p>Mọi chỗ sửa đều được ghi log để xem lại — không sửa im lặng.</p>
+    <table style="width:100%;border-collapse:collapse;font-size:.85rem" id="corrTable"></table>
+  </div>
+  <button class="close" id="btnClose">Đã hiểu</button>
   </div>
 </div>
 <div id="toast"></div>
-<button data-act="license">© Bản quyền</button>
 
-
-
-
-  
-  
+<script src="vendor/pdf.min.js"></script>
 <script>
+if(window.pdfjsLib){ pdfjsLib.GlobalWorkerOptions.workerSrc = "vendor/pdf.worker.min.js"; }
 "use strict";
 const $ = id => document.getElementById(id);
 let curFile = null, curImg = null, busyFlag = false;
+/* v3: trạng thái đường Text + xuất Word */
+let pdfLDM = null, pageTexts = {}, correctionsList = [], sourceName = "";
 
 function toast(msg, isErr){
   const t = $("toast");
@@ -328,14 +356,48 @@ async function pollStatus(){
   }
 })();
 
-/* ---- chọn / kéo thả ảnh ---- */
-function acceptFile(f){
+/* ---- chọn / kéo thả ảnh hoặc PDF ---- */
+let pdfDoc = null, isPDF = false;
+function pdfOcrScale(vpW){ return Math.min(2.9, Math.max(1.5, 1700 / vpW)); }
+
+async function acceptFile(f){
   if(!f) return;
-  if(!/\.(png|jpe?g|bmp|gif)$/i.test(f.name) && !/^image\//.test(f.type)){
-    toast("Chỉ hỗ trợ JPG, PNG, BMP, GIF.", true); return;
+  const pdf = /\.pdf$/i.test(f.name) || f.type === "application/pdf";
+  if(!pdf && !/\.(png|jpe?g|bmp|gif)$/i.test(f.name) && !/^image\//.test(f.type)){
+    toast("Chỉ hỗ trợ JPG, PNG, BMP, GIF, PDF.", true); return;
   }
-  if(f.size > 30*1024*1024){
-    toast("Ảnh quá lớn (tối đa 30 MB).", true); return;
+  if(f.size > (pdf ? 60 : 30)*1024*1024){
+    toast("File quá lớn (tối đa " + (pdf ? 60 : 30) + " MB).", true); return;
+  }
+  pdfDoc = null; isPDF = pdf;
+  $("btnRun").textContent = "🅆 Nhận dạng";
+  if(pdf){
+    curFile = f;
+    try{
+      pdfDoc = await pdfjsLib.getDocument({data: await f.arrayBuffer()}).promise;
+    }catch(e){
+      toast("Không mở được PDF: " + e.message, true); return;
+    }
+    const n = pdfDoc.numPages;
+    $("fileMeta").textContent = f.name + " — " + n + " trang";
+    $("fDim").textContent = "PDF " + n + " trang";
+    $("fSize").textContent = (f.size/1024).toFixed(0) + " KB";
+    $("fileInfo").style.display = "flex";
+    $("btnRun").disabled = false;
+    $("btnRun").textContent = "🅆 Nhận dạng " + n + " trang";
+    drawBoxes(null);
+    // xem trước trang 1 (render cùng tỉ lệ với lúc OCR để khung khớp)
+    try{
+      const page = await pdfDoc.getPage(1);
+      const vp = page.getViewport({scale: pdfOcrScale(page.getViewport({scale: 1}).width)});
+      const cv = document.createElement("canvas");
+      cv.width = vp.width; cv.height = vp.height;
+      await page.render({canvasContext: cv.getContext("2d"), viewport: vp}).promise;
+      const img = $("preview");
+      img.onload = () => { $("previewWrap").style.display = "block"; };
+      img.src = cv.toDataURL("image/png");
+    }catch(_){}
+    return;
   }
   curFile = f;
   const url = URL.createObjectURL(f);
@@ -363,11 +425,14 @@ $("file").addEventListener("change", e => acceptFile(e.target.files[0]));
 }));
 $("drop").addEventListener("drop", e => acceptFile(e.dataTransfer.files[0]));
 $("btnClear").addEventListener("click", () => {
-  curFile = null;
+  curFile = null; pdfDoc = null; isPDF = false;
+  pdfLDM = null; pageTexts = {}; correctionsList = []; sourceName = "";
+  $("btnWord").style.display = "none"; $("btnCorr").style.display = "none";
   $("previewWrap").style.display = "none";
   $("fileInfo").style.display = "none";
   $("fileMeta").textContent = "Chưa chọn ảnh";
   $("btnRun").disabled = true;
+  $("btnRun").textContent = "🅆 Nhận dạng";
   $("result").value = ""; $("empty").style.display = "flex";
   $("charCount").textContent = "0 ký tự";
   $("confAvg").textContent = "• Độ tin cậy TB: —";
@@ -406,22 +471,87 @@ function drawBoxes(res){
 }
 window.addEventListener("resize", () => drawBoxes(lastResult));
 
-/* ---- chạy nhận dạng ---- */
+/* ---- chạy nhận dạng (ảnh đơn hoặc PDF nhiều trang) ---- */
 $("btnRun").addEventListener("click", async () => {
   if(!curFile || busyFlag) return;
   busyFlag = true;
   $("btnRun").disabled = true;
   $("busyOverlay").style.display = "flex";
+  const ovP = $("busyOverlay").querySelector("p");
   try{
-    const fd = new FormData();
-    fd.append("file", curFile);
-    fd.append("engine", $("engine").value);
-    fd.append("cls", $("clsFlag").checked ? "1" : "0");
-    const r = await fetch("/api/ocr", {method: "POST", body: fd});
-    const text = await r.text();
-    let data;
-    try{ data = JSON.parse(text); }catch(_){ throw new Error(text || ("HTTP " + r.status)); }
-    if(!r.ok) throw new Error(data.error || "HTTP " + r.status);
+    let data, detSide = "960";
+    if(isPDF && pdfDoc){
+      const n = pdfDoc.numPages;
+      const parts = [];
+      let ocrPages = 0, confSum = 0, confN = 0, totalMs = 0;
+      pdfLDM = null; pageTexts = {}; correctionsList = [];
+      sourceName = curFile.name;
+      const useText = $("useTextLayer").checked;
+      let textPages = 0;
+      if(useText){
+        // ── v3 đường Text: server trích LỚP CHỮ PDF (không OCR trang chữ) ──
+        ovP.textContent = "Đang đọc lớp chữ PDF...";
+        const fd = new FormData();
+        fd.append("file", curFile);
+        const r = await fetch("/api/pdf-text", {method: "POST", body: fd});
+        const txt = await r.text();
+        let d2;
+        try{ d2 = JSON.parse(txt); }catch(_){ throw new Error(txt || ("HTTP " + r.status)); }
+        if(!r.ok) throw new Error(d2.error || "HTTP " + r.status);
+        pdfLDM = d2.ldm || null;
+        correctionsList = d2.corrections || [];
+        totalMs += d2.ms || 0;
+        (d2.pages || []).forEach(p => {
+          if(p.needs_ocr || !p.text){ return; }
+          pageTexts[p.i] = p.text;
+          textPages++;
+        });
+      }
+      for(let i = 1; i <= n; i++){
+        if(pageTexts[i] !== undefined){
+          // trang chữ — dùng lớp chữ đã trích, không OCR
+          parts.push("===== Trang " + i + "/" + n + " =====\n" + pageTexts[i]);
+          if(i === 1){ lastResult = null; $("previewWrap").style.display = "none"; $("fileInfo").style.display = "flex"; }
+          continue;
+        }
+        // trang scan/chữ giả — OCR như v2
+        ocrPages++;
+        ovP.textContent = "Đang OCR trang " + i + "/" + n + "...";
+        const page = await pdfDoc.getPage(i);
+        const scale = pdfOcrScale(page.getViewport({scale: 1}).width);
+        const vp = page.getViewport({scale});
+        const cv = document.createElement("canvas");
+        cv.width = vp.width; cv.height = vp.height;
+        await page.render({canvasContext: cv.getContext("2d"), viewport: vp}).promise;
+        const blob = await new Promise(r => cv.toBlob(r, "image/png"));
+        data = await ocrRequest(blob, "trang-" + i + ".png", "1440");
+        const lineTxt = (data.lines || []).join("\n");
+        parts.push("===== Trang " + i + "/" + n + " =====\n" + lineTxt);
+        pageTexts[i] = lineTxt;
+        (data.results || []).forEach(x => { confSum += x.conf || 0; confN++; });
+        totalMs += data.ms || 0;
+        if(i === 1){
+          lastResult = data;
+          const img = $("preview");
+          img.onload = () => { $("previewWrap").style.display = "block"; drawBoxes(data); };
+          img.src = cv.toDataURL("image/png");
+        }
+      }
+      const full = parts.join("\n\n");
+      $("result").value = full;
+      $("empty").style.display = full ? "none" : "flex";
+      $("charCount").textContent = full.length + " ký tự";
+      $("confAvg").textContent = confN ? "• Độ tin cậy TB (trang OCR): " + (confSum/confN*100).toFixed(1) + "%"
+                                       : "• Độ tin cậy TB: 100% (lớp chữ gốc)";
+      $("engineInfo").textContent = (textPages ? "Lớp chữ PDF ×" + textPages : "") +
+        (ocrPages ? (textPages ? " + " : "") + ($("engine").value === "seq2seq" ? "Seq2Seq" : "Transformer") + " ×" + ocrPages : "");
+      $("timeInfo").textContent = (totalMs/1000).toFixed(2) + " s";
+      showExportButtons();
+      toast("Xong " + n + " trang" + (textPages ? " — " + textPages + " trang dùng lớp chữ (không OCR)" : "") +
+            (ocrPages ? " — " + ocrPages + " trang OCR" : "") + ".");
+      return;
+    }
+    data = await ocrRequest(curFile, curFile.name, detSide);
     lastResult = data;
     const lines = data.lines || [];
     $("result").value = lines.join("\n");
@@ -434,6 +564,10 @@ $("btnRun").addEventListener("click", async () => {
     $("engineInfo").textContent = $("engine").value === "seq2seq" ? "Seq2Seq" : "Transformer";
     $("timeInfo").textContent = (data.ms/1000).toFixed(2) + " s";
     drawBoxes(data);
+    /* v3: cho phép xuất Word cả với ảnh OCR */
+    pdfLDM = null; correctionsList = []; sourceName = curFile.name;
+    pageTexts = {1: lines.join("\n")};
+    showExportButtons();
     toast(lines.length ? "Nhận dạng xong: " + lines.length + " dòng." : "Không tìm thấy vùng chữ nào.");
   }catch(err){
     toast("Lỗi: " + err.message, true);
@@ -443,6 +577,20 @@ $("btnRun").addEventListener("click", async () => {
     $("busyOverlay").style.display = "none";
   }
 });
+
+async function ocrRequest(blob, name, detSide){
+  const fd = new FormData();
+  fd.append("file", blob, name);
+  fd.append("engine", $("engine").value);
+  fd.append("cls", $("clsFlag").checked ? "1" : "0");
+  if(detSide) fd.append("det", detSide);
+  const r = await fetch("/api/ocr", {method: "POST", body: fd});
+  const text = await r.text();
+  let data;
+  try{ data = JSON.parse(text); }catch(_){ throw new Error(text || ("HTTP " + r.status)); }
+  if(!r.ok) throw new Error(data.error || "HTTP " + r.status);
+  return data;
+}
 
 /* ---- tiện ích kết quả ---- */
 $("result").addEventListener("input", () => {
@@ -464,6 +612,65 @@ $("btnTxt").addEventListener("click", () => {
   a.click();
 });
 
+/* ---- v3: xuất Word + panel chỗ đã sửa ---- */
+function showExportButtons(){
+  const hasText = Object.keys(pageTexts).some(k => (pageTexts[k] || "").trim() !== "");
+  $("btnWord").style.display = hasText ? "" : "none";
+  $("btnCorr").style.display = correctionsList.length ? "" : "none";
+  $("corrCount").textContent = correctionsList.length;
+}
+
+$("btnWord").addEventListener("click", async () => {
+  if(!Object.keys(pageTexts).length){ toast("Chưa có kết quả để xuất Word.", true); return; }
+  toast("Đang tạo file Word...");
+  try{
+    const body = {
+      source: sourceName,
+      ldm: pdfLDM,
+      page_texts: pageTexts,
+      page_breaks: true
+    };
+    const r = await fetch("/api/export-docx", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body)
+    });
+    if(!r.ok){
+      const t = await r.text();
+      let msg = "HTTP " + r.status;
+      try{ msg = JSON.parse(t).error || msg; }catch(_){}
+      throw new Error(msg);
+    }
+    const blob = await r.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = (sourceName || "ket-qua").replace(/\.[^.]+$/, "") + ".docx";
+    a.click();
+    toast("Đã xuất file Word giữ định dạng.");
+  }catch(err){
+    toast("Lỗi xuất Word: " + err.message, true);
+  }
+});
+
+$("btnCorr").addEventListener("click", () => {
+  const tb = $("corrTable");
+  let html = "<tr style='color:#0b2047'><th style='text-align:left;border-bottom:1px solid #dbe2ee;padding:6px'>Trang</th>" +
+             "<th style='text-align:left;border-bottom:1px solid #dbe2ee;padding:6px'>Trước khi sửa</th>" +
+             "<th style='text-align:left;border-bottom:1px solid #dbe2ee;padding:6px'>Đã sửa thành</th></tr>";
+  correctionsList.forEach(c => {
+    html += "<tr><td style='padding:6px;border-bottom:1px solid #eef1f6'>" + c.page + "</td>" +
+            "<td style='padding:6px;border-bottom:1px solid #eef1f6;color:#b91c1c'>" + escapeHTML(c.orig) + "</td>" +
+            "<td style='padding:6px;border-bottom:1px solid #eef1f6;color:#15803d'>" + escapeHTML(c.fixed) + "</td></tr>";
+  });
+  tb.innerHTML = html;
+  $("corrSec").style.display = "";
+  $("modal").style.display = "flex";
+});
+
+function escapeHTML(s){
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
 /* ---- modal hướng dẫn ---- */
 $("btnGuide").addEventListener("click", () => $("modal").style.display = "flex");
 $("btnClose").addEventListener("click", () => $("modal").style.display = "none");
@@ -471,6 +678,3 @@ $("modal").addEventListener("click", e => { if(e.target === $("modal")) $("modal
 </script>
 </body>
 </html>
-
-
-
