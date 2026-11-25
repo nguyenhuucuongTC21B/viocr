@@ -120,11 +120,14 @@ func findStreamKeyword(b []byte) int {
 	return -1
 }
 
-// takeStreamByLength cắt đúng /Length byte (Length có thể là tham chiếu —
-// khi đó trả về tới "endstream" gần nhất).
+// takeStreamByLength cắt đúng /Length byte. LƯU Ý QUAN TRỌNG: nếu /Length là
+// tham chiếu gián tiếp (/Length 27 0 R — Aspose.Words luôn ghi vậy), số "27"
+// là SỐ OBJECT chứ không phải độ dài — cắt nhầm sẽ phá toàn bộ stream (lỗi
+// thật trên "Nhận xét nơi cư trú 2026": cả trang rớt về 0 run). Khi đó quét
+// tới "endstream" gần nhất.
 func takeStreamByLength(dictPart, sdata []byte) []byte {
-	m := regexp.MustCompile(`/Length\s+(\d+)\b`).FindSubmatch(dictPart)
-	if m != nil {
+	m := regexp.MustCompile(`/Length\s+(\d+)(\s+\d+\s+R)?\b`).FindSubmatch(dictPart)
+	if m != nil && len(m[2]) == 0 { // Length trực tiếp (không có "N 0 R" phía sau)
 		n, err := strconv.Atoi(string(m[1]))
 		if err == nil && n >= 0 && n <= len(sdata) {
 			return sdata[:n]
@@ -683,6 +686,11 @@ type fontInfo struct {
 	baseName string
 	cm       *cmap
 	bold     bool
+	// widths — bảng bề rộng glyph thật (đơn vị 1/1000 cỡ chữ): font đơn →
+	// /Widths+/FirstChar; font CID → /W của DescendantFonts. Có bảng → tính
+	// tiến vị trí CHÍNH XÁC sau Tj (Aspose/Word không ghi Td giữa các từ);
+	// không có → ước lượng theo nhóm ký tự.
+	widths map[int]float64
 }
 
 func (pf *pdfFile) pages() []*pdfObj {
@@ -824,10 +832,88 @@ func (pf *pdfFile) buildPageInfo(page *pdfObj) (*pdfPageInfo, error) {
 					fi.cm = parseCMap(o.stream)
 				}
 			}
+			fi.widths = pf.loadFontWidths(fv2)
 			info.Fonts[key] = fi
 		}
 	}
 	return info, nil
+}
+
+// loadFontWidths — nạp bảng bề rộng glyph: font đơn (WinAnsi) từ /Widths+
+// /FirstChar; font CID (Identity-H) từ /W của DescendantFonts[0], hai dạng
+// `c [w1 w2 ...]` và `c1 c2 w`. Trả nil nếu không có (dùng ước lượng).
+func (pf *pdfFile) loadFontWidths(fv2 pdfValue) map[int]float64 {
+	w := map[int]float64{}
+	// 1) font đơn: /Widths [w0 w1 ...] + /FirstChar n
+	if ws := fv2.get("Widths"); ws.kind == 'a' {
+		first := 0
+		if fc := fv2.get("FirstChar"); fc.kind == 'd' {
+			first = int(fc.num)
+		}
+		for i, el := range ws.list {
+			if el.kind == 'd' {
+				w[first+i] = el.num
+			}
+		}
+		if len(w) > 0 {
+			return w
+		}
+	}
+	// 2) font CID: DescendantFonts [ref] → /W [...]
+	df := fv2.get("DescendantFonts")
+	var fo *pdfObj
+	switch df.kind {
+	case 'a':
+		if len(df.list) > 0 && df.list[0].kind == 'r' {
+			fo = pf.resolve(df.list[0])
+		}
+	case 'r':
+		fo = pf.resolve(df)
+	}
+	if fo == nil {
+		return nil
+	}
+	dv := parseObjectAt(fo.raw)
+	wv := dv.get("W")
+	if wv.kind != 'a' {
+		return nil
+	}
+	i := 0
+	for i < len(wv.list) {
+		a := wv.list[i]
+		if a.kind != 'd' {
+			i++
+			continue
+		}
+		// dạng 1: c [w1 w2 ...]
+		if i+1 < len(wv.list) && wv.list[i+1].kind == 'a' {
+			c := int(a.num)
+			for k, el := range wv.list[i+1].list {
+				if el.kind == 'd' {
+					w[c+k] = el.num
+				}
+			}
+			i += 2
+			continue
+		}
+		// dạng 2: c1 c2 w
+		if i+2 < len(wv.list) && wv.list[i+1].kind == 'd' && wv.list[i+2].kind == 'd' {
+			c1, c2 := int(a.num), int(wv.list[i+1].num)
+			wd := wv.list[i+2].num
+			if c2 >= c1 && c2-c1 <= 65535 {
+				for c := c1; c <= c2; c++ {
+					w[c] = wd
+				}
+			}
+			i += 3
+			continue
+		}
+		i++
+	}
+	if len(w) == 0 {
+		return nil
+	}
+	return w
 }
 
 // rawDictBytes — tái dựng bytes dict từ giá trị đã parse (cho font inline).
@@ -886,6 +972,11 @@ func extractRuns(info *pdfPageInfo) []Run {
 	ctmStack := []mtx{}
 	for _, cs := range info.Contents {
 		tm := ident
+		// Tlm — ma trận DÒNG (text line matrix, PDF spec 9.4.3): Td/TD/T* dịch
+		// TỔNG ĐỐI VỚI Tlm (không phải vị trí hiện hành tm đã tự tiến sau Tj);
+		// Tm đặt cả Tlm lẫn tm. Nhầm 2 ma trận này làm chữ trôi (lỗi thật trên
+		// "Nhận xét nơi cư trú 2026": Aspose định vị từng từ bằng Td).
+		tlm := ident
 		fontKey := ""
 		fontSize := 0.0
 		leading := 0.0
@@ -919,6 +1010,7 @@ func extractRuns(info *pdfPageInfo) []Run {
 			case "BT":
 				inText = true
 				tm = ident
+				tlm = ident // BT reset cả ma trận dòng (spec 9.4.3)
 				stack = stack[:0]
 			case "ET":
 				inText = false
@@ -940,28 +1032,35 @@ func extractRuns(info *pdfPageInfo) []Run {
 				stack = stack[:0]
 			case "Td":
 				if f1, f2, ok := pair(stack); ok {
-					tm = mulM(mtx{1, 0, 0, 1, f1, f2}, tm)
+					tlm = mulM(mtx{1, 0, 0, 1, f1, f2}, tlm)
+					tm = tlm
 				}
 				stack = stack[:0]
 			case "TD":
 				if f1, f2, ok := pair(stack); ok {
 					leading = -f2
-					tm = mulM(mtx{1, 0, 0, 1, f1, f2}, tm)
+					tlm = mulM(mtx{1, 0, 0, 1, f1, f2}, tlm)
+					tm = tlm
 				}
 				stack = stack[:0]
 			case "Tm":
 				if len(stack) >= 6 {
 					tm = readMtx(stack[len(stack)-6:])
+					tlm = tm
 				}
 				stack = stack[:0]
 			case "T*":
-				tm = mulM(mtx{1, 0, 0, 1, 0, -leading}, tm)
+				tlm = mulM(mtx{1, 0, 0, 1, 0, -leading}, tlm)
+				tm = tlm
 				stack = stack[:0]
 			case "'":
-				tm = mulM(mtx{1, 0, 0, 1, 0, -leading}, tm)
+				tlm = mulM(mtx{1, 0, 0, 1, 0, -leading}, tlm)
+				tm = tlm
 				if inText && len(stack) >= 1 {
 					if sv := last(stack, 1); sv.kind == 's' {
-						runs = append(runs, makeRun(sv.str, info, tm, ctm, fontKey, fontSize))
+						r := makeRun(sv.str, info, tm, ctm, fontKey, fontSize)
+						runs = append(runs, r)
+						tm = mulM(mtx{1, 0, 0, 1, estWidth(sv.str, info.Fonts[fontKey], fontSize), 0}, tm)
 					}
 				}
 				stack = stack[:0]
@@ -975,18 +1074,26 @@ func extractRuns(info *pdfPageInfo) []Run {
 			case "Tj":
 				if inText && len(stack) >= 1 {
 					if sv := last(stack, 1); sv.kind == 's' {
-						runs = append(runs, makeRun(sv.str, info, tm, ctm, fontKey, fontSize))
+						r := makeRun(sv.str, info, tm, ctm, fontKey, fontSize)
+						runs = append(runs, r)
+						// tiến vị trí: PDF không tự dịch sau Tj — producer ghi đè
+						// vị trí bằng Td/Tm giữa các từ, nhưng Aspose/Word KHÔNG
+						// (dựa vào advance của glyph). Không tiến → mọi từ cùng
+						// x0 → tách dòng/sai khoảng cách (lỗi thật trên "Nhận
+						// xét nơi cư trú 2026").
+						tm = mulM(mtx{1, 0, 0, 1, estWidth(sv.str, info.Fonts[fontKey], fontSize), 0}, tm)
 					}
 				}
 				stack = stack[:0]
 			case "TJ":
 				if inText {
 					if arr := lastArray(stack); arr != nil {
-						s := showTJ(*arr, info, fontKey, fontSize)
+						s, adv := showTJ(*arr, info, fontKey, fontSize)
 						if debugRawRuns {
 							println("TJ font=", fontKey, "raw=", hexPreview(s))
 						}
 						runs = append(runs, makeRunDecoded(s, info, tm, ctm, fontKey, fontSize))
+						tm = mulM(mtx{1, 0, 0, 1, adv, 0}, tm)
 					}
 				}
 				stack = stack[:0]
@@ -1054,6 +1161,68 @@ func makeRun(rawStr string, info *pdfPageInfo, tm, ctm mtx, fontKey string, font
 	return buildRun(text, info, tm, ctm, fontKey, fontSize)
 }
 
+// estWidth — bề rộng chuỗi glyph (đơn vị không gian chữ). Có bảng /Widths
+// thật (font nhúng — Aspose luôn ghi) → tính CHÍNH XÁC theo mã glyph; không
+// có → ước lượng theo nhóm ký tự.
+func estWidth(rawStr string, fi *fontInfo, fontSize float64) float64 {
+	if fi != nil && fi.widths != nil {
+		adv := 0.0
+		if fi.cm != nil {
+			b := []byte(rawStr)
+			cl := fi.cm.codeLen
+			for j := 0; j < len(b); j += cl {
+				end := j + cl
+				if end > len(b) {
+					end = len(b)
+				}
+				code := 0
+				for _, x := range b[j:end] {
+					code = code<<8 | int(x)
+				}
+				if w, ok := fi.widths[code]; ok {
+					adv += w
+				} else {
+					adv += 500
+				}
+			}
+		} else {
+			for _, x := range []byte(rawStr) {
+				if w, ok := fi.widths[int(x)]; ok {
+					adv += w
+				} else {
+					adv += 500
+				}
+			}
+		}
+		return adv / 1000 * fontSize
+	}
+	// heuristic: không có metrics — ước lượng theo nhóm ký tự
+	const (
+		narrow = 0.30 // i l j t f . , ' ' ( ) [ ] | ! dấu thanh
+		wide   = 0.80 // m w M W @ —
+		normal = 0.52
+	)
+	if fi != nil && fi.cm != nil {
+		rawStr = fi.cm.decodeStr(rawStr)
+	} else if fi == nil || fi.cm == nil {
+		rawStr = latin1ToUTF8(rawStr)
+	}
+	w := 0.0
+	for _, r := range rawStr {
+		switch {
+		case r == ' ' || r == '\t':
+			w += 0.30
+		case strings.ContainsRune("iljtf.,'!|[]()", r):
+			w += narrow
+		case strings.ContainsRune("mwMW@", r):
+			w += wide
+		default:
+			w += normal
+		}
+	}
+	return w * fontSize
+}
+
 // makeRunDecoded — dựng Run từ văn bản ĐÃ decode (dùng cho TJ: showTJ decode
 // từng chuỗi thành phần; decode lại lần nữa sẽ hỏng chữ).
 func makeRunDecoded(text string, info *pdfPageInfo, tm, ctm mtx, fontKey string, fontSize float64) Run {
@@ -1095,27 +1264,33 @@ func buildRun(text string, info *pdfPageInfo, tm, ctm mtx, fontKey string, fontS
 }
 
 // showTJ — mảng TJ: decode TỪNG chuỗi qua cmap rồi mới ghép; số âm lớn → chèn
-// khoảng trắng giữa các đoạn ĐÃ decode. Không được chèn byte vào giữa chuỗi
+// khoảng trắng giữa các đoạn ĐÃ decode; đồng thời tính TỔNG bề rộng cần tiến
+// (mỗi chuỗi + mỗi số kerning×cỡ/1000). Không được chèn byte vào giữa chuỗi
 // CID 2-byte — lệch cặp byte làm hỏng cả phần sau (lỗi thật trên Quy chế 274:
-// kerning ≤ -100 khiến cả dòng thành rác).
-func showTJ(arr pdfValue, info *pdfPageInfo, fontKey string, fontSize float64) string {
+// kerning ≤ −100 khiến cả dòng thành rác).
+func showTJ(arr pdfValue, info *pdfPageInfo, fontKey string, fontSize float64) (string, float64) {
 	fi := info.Fonts[fontKey]
 	out := ""
+	adv := 0.0
 	for _, v := range arr.list {
 		switch v.kind {
 		case 's':
+			t := v.str
 			if fi != nil && fi.cm != nil {
-				out += fi.cm.decodeStr(v.str)
+				t = fi.cm.decodeStr(v.str)
 			} else {
-				out += latin1ToUTF8(v.str)
+				t = latin1ToUTF8(v.str)
 			}
+			out += t
+			adv += estWidth(v.str, fi, fontSize) // bề rộng theo MÃ gốc
 		case 'd':
+			adv += v.num / 1000 * fontSize
 			if v.num <= -100 {
 				out += " "
 			}
 		}
 	}
-	return out
+	return out, adv
 }
 
 func cleanFontName(fi *fontInfo) string {
@@ -1126,7 +1301,10 @@ func cleanFontName(fi *fontInfo) string {
 	if i := strings.Index(n, "+"); i >= 0 { // bỏ prefix subset "ABCDEF+"
 		n = n[i+1:]
 	}
-	return strings.Trim(n, "-MT")
+	// bỏ hậu tố "-MT"/"MT" (PostScript name của Microsoft fonts) — KHÔNG dùng
+	// strings.Trim với cutset: "Times..." bị ăn mất chữ "T" đầu!
+	n = strings.TrimSuffix(n, "-MT")
+	return strings.TrimSuffix(n, "MT")
 }
 
 func latin1ToUTF8(s string) string {

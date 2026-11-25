@@ -92,6 +92,30 @@ Kết quả đo trên chính file đó: đường Text khôi phục **100% số 
 đường OCR (trang scan) giữ đúng thứ tự đọc và chân trang, còn sai lệch nhận
 dạng ~7,5% từ — đúng giới hạn model, sẽ cải thiện ở beta (dewarp + model).
 
+### Sửa tiếp từ thử nghiệm thứ 2 (Phiếu nhận xét nơi cư trú 2026, Word→PDF Aspose + eSignature iText)
+
+File Word chuyển PDF bằng Aspose.Words (font trộn WinAnsi + Identity-H, được
+công cụ chữ ký số iText nối thêm bản ghi) lộ thêm 3 lỗi — đều là dạng PDF
+Word/xuất từ văn phòng rất phổ biến:
+
+6. **`/Length N 0 R` gián tiếp**: Aspose ghi độ dài stream là THAM CHIẾU
+   (`/Length 27 0 R`) — parser cũ cắt nhầm stream còn 27 byte → toàn trang
+   0 run → bị đánh dấu "cần OCR" dù lớp chữ đầy đủ (chính là lý do file này
+   đi OCR và ra lỗi nhận dạng). Giờ nhận diện `N 0 R` và quét tới `endstream`.
+7. **Ma trận dòng Tlm vs ma trận chữ Tm** (PDF spec 9.4.3): `Td/TD/T*` dịch
+   vị trí TƯƠNG ĐỐI VỚI Tlm chứ không phải vị trí hiện hành; đồng thời PDF
+   thật TỰ TIẾN vị trí sau mỗi `Tj` theo bề rộng glyph — Aspose định vị từng
+   từ bằng cách này. Trước đó mọi từ cùng x0 → dòng bị tách giữa câu, mất
+   khoảng cách từ ("chínhtrị", "saukhi").
+8. **Bảng bề rộng glyph thật**: đọc `/Widths` (font đơn) và `/W` của
+   DescendantFonts (font CID) từ font nhúng → tiến vị trí CHÍNH XÁC thay vì
+   ước lượng; kèm sửa `cleanFontName` ăn mất ký tự đầu ("Times…" thành
+   "imes…").
+
+Kết quả đo trên file này: **307/307 từ khớp tuyệt đối** so với lớp chữ
+(0 thiếu, 0 thừa), dòng và khoảng cách đúng như Word trình bày; file Quy chế
+274 chạy lại không hồi quy (vẫn 100% nội dung).
+
 ## Mới ở bản 2.0.0
 
 - **Đọc file PDF**: kéo thả PDF vào giao diện — từng trang được render ngay trên
