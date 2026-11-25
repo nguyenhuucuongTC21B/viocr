@@ -69,6 +69,29 @@ Giới hạn của alpha (đúng phạm vi mục 7 tài liệu thiết kế): b�
 kẻ chưa xử lý; ô gộp bảng chỉ nhận ở mức heuristic; sửa theo ngữ cảnh chưa có;
 dewarp/chữ viết tay/đa ngôn ngữ ngoài tiếng Việt + tiếng Anh nằm ngoài phạm vi.
 
+### Sửa sau thử nghiệm trên tài liệu thật (Quy chế 274/QĐ-VKSTC, 3 trang A4)
+
+Thử nghiệm với file PDF thật của ngành (WeasyPrint xuất HTML→PDF, font CID
+TrueType Identity-H) phát hiện và đã sửa 5 lỗi:
+
+1. **ToUnicode chỉ có bfrange** (WeasyPrint không ghi bfchar) khiến độ dài mã
+   dò thành 1 byte → cả trang thành rác Latin-1 → trang bị đánh dấu "cần OCR"
+   dù có lớp chữ. Đã dò độ dài mã từ cả hex nguồn của bfrange.
+2. **Kerning ≤ −100 trong TJ** chèn byte khoảng trắng vào giữa chuỗi CID
+   2-byte → lệch cặp byte, phần còn lại của dòng thành rác. Đã decode từng
+   chuỗi thành phần TRƯỚC khi ghép.
+3. **Double-decode TJ** (showTJ decode, makeRun decode nữa) làm mất chữ có
+   dấu. Đã tách: decode đúng một lần.
+4. **Thứ tự đọc cột**: khối được xếp theo băng y (dòng chồng nhau = cùng
+   "hàng") rồi trái→phải trong băng; dòng vắt qua cột không còn bị mất.
+5. **Đầu/cuối trang**: chỉ tách khi dòng LẶP LẠI ở ≥2 trang (không còn nhầm
+   tiêu đề lớn nằm sát lề); chân trang OCR ("Trang 2/3"...) nhận diện đúng.
+
+Kết quả đo trên chính file đó: đường Text khôi phục **100% số từ** (so với
+5,11% thiếu trước khi sửa) với dấu tiếng Việt chính xác từng ký tự, ~10 ms/trang;
+đường OCR (trang scan) giữ đúng thứ tự đọc và chân trang, còn sai lệch nhận
+dạng ~7,5% từ — đúng giới hạn model, sẽ cải thiện ở beta (dewarp + model).
+
 ## Mới ở bản 2.0.0
 
 - **Đọc file PDF**: kéo thả PDF vào giao diện — từng trang được render ngay trên

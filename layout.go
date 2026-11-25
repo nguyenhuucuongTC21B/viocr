@@ -19,13 +19,26 @@ const (
 )
 
 // buildPageBlocks — dựng khối cho 1 trang từ các run thô (đường Text).
-// Trả về các Block theo thứ tự đọc (xếp theo vị trí y sau khi tách bảng).
+// Trả về các Block theo thứ tự đọc. Đầu/cuối trang chỉ được coi là
+// Header/Footer khi CHỮ LẶP LẠI ở cùng vị trí trên ≥2 trang (xem repeatedHeadFoot):
+// tránh ăn nhầm tiêu đề lớn nằm trong dải biên.
 func buildPageBlocks(runs []Run, w, h float64) []Block {
+	return buildPageBlocksWithHF(runs, w, h, nil, nil)
+}
+
+// buildPageBlocksWithHF — như trên, kèm tập chữ đầu/cuối trang đã biết lặp
+// (từ phân tích cả tài liệu). key = chữ thường hóa của dòng.
+func buildPageBlocksWithHF(runs []Run, w, h float64, repHead, repFoot map[string]bool) []Block {
 	if len(runs) == 0 {
 		return nil
 	}
-	// 1) heuristic bảng: lấy các run thành lưới trước
-	rest, tableBlocks := detectTableRuns(runs)
+	// 1) heuristic bảng từ run: ĐANG TẮT trong alpha — trên tài liệu nhiều cột
+	// (ví dụ bảng so sánh 2 cột của quy chế) nó nhận nhầm vùng chữ thành lưới
+	// và làm mất/sai thứ tự chữ — với hồ sơ pháp lý, đọc đúng thứ tự quan trọng
+	// hơn có bảng. Bảng thật (có đường kẻ) sẽ nhận diện bằng morphology ở beta
+	// (mục 4.3 tài liệu thiết kế). Hàm giữ lại kèm test để mở khi hoàn thiện.
+	rest, tableBlocks := runs, []Block(nil)
+	// rest, tableBlocks := detectTableRuns(runs)
 
 	lines := groupLines(rest)
 	if len(lines) == 0 {
@@ -35,43 +48,147 @@ func buildPageBlocks(runs []Run, w, h float64) []Block {
 	// cỡ chữ phổ biến = thân bài
 	bodySize := medianLineSize(lines)
 
-	// tách đầu/cuối trang (vùng biên) khỏi phần thân
+	// tách đầu/cuối trang (vùng biên) khỏi phần thân — chỉ khi dòng lặp lại
 	var body, heads, foots []lLine
 	for _, ln := range lines {
+		key := hfKey(ln)
 		yMid := (ln.y0 + ln.y1) / 2
+		inHead := yMid < h*headFooterBand
+		inFoot := yMid > h*(1-headFooterBand)
 		switch {
-		case yMid < h*headFooterBand:
+		case inHead && (repHead == nil || repHead[key]):
 			heads = append(heads, ln)
-		case yMid > h*(1-headFooterBand):
+		case inFoot && (repFoot == nil || repFoot[key]):
 			foots = append(foots, ln)
 		default:
 			body = append(body, ln)
 		}
 	}
 
-	// phát hiện 2 cột: dải trắng dọc gần giữa trang
-	colLines := splitColumns(body, w)
-	var ordered []lLine
-	if colLines != nil {
-		ordered = colLines
-	} else {
-		ordered = body
-	}
-
-	// gom khối
-	blocks := groupBlocks(ordered, bodySize, w)
-	// đầu trang → BlockHeader, cuối trang → BlockFooter
+	// thứ tự đọc: các dòng đưa vào groupBlocks theo y (đã sort bởi groupLines);
+	// cột trái/phải sẽ thành các khối riêng và được sortBlocksReadingOrder cuối
+	// hàm xếp đúng trái→phải trong từng băng y. KHÔNG reorder dòng trước đó:
+	// splitColumns kiểu "trái hết rồi phải" làm mất các dòng vắt qua cột
+	// (tiêu đề, đoạn đầy trang) — lỗi thực tế trên Quy chế 274.
+	blocks := groupBlocks(body, bodySize, w)
+	// đầu trang → BlockHeader, cuối trang → BlockFooter (tọa độ đầy đủ)
 	for _, ln := range heads {
-		blocks = append([]Block{{Kind: BlockHeader, Lines: []Line{ln.toLine()}, Conf: 1.0}}, blocks...)
+		b := Block{Kind: BlockHeader, Lines: []Line{ln.toLine()}, Conf: 1.0}
+		b.X0, b.Y0, b.X1, b.Y1 = ln.x0, ln.y0, ln.x1, ln.y1
+		blocks = append(blocks, b)
 	}
 	for _, ln := range foots {
-		blocks = append(blocks, Block{Kind: BlockFooter, Lines: []Line{ln.toLine()}, Conf: 1.0})
+		b := Block{Kind: BlockFooter, Lines: []Line{ln.toLine()}, Conf: 1.0}
+		b.X0, b.Y0, b.X1, b.Y1 = ln.x0, ln.y0, ln.x1, ln.y1
+		blocks = append(blocks, b)
 	}
 	blocks = append(blocks, tableBlocks...)
-	// thứ tự đọc: theo y (trái→phải đã trong từng nhóm)
-	sort.SliceStable(blocks, func(i, j int) bool { return blocks[i].Y0 < blocks[j].Y0 })
+	sortBlocksReadingOrder(blocks)
 	renumber(blocks)
 	return blocks
+}
+
+// hfKey — khóa so sánh dòng đầu/cuối trang (chữ thường, gọn khoảng trắng).
+func hfKey(ln lLine) string {
+	return strings.Join(strings.Fields(strings.ToLower(ln.toLine().Text())), " ")
+}
+
+// repeatedHeadFoot — quét mọi trang: dòng trong dải biên xuất hiện ở ≥2 trang
+// → trả (tập header lặp, tập footer lặp). Nhận diện "chân trang lặp" theo
+// mục 4.3 tài liệu thiết kế.
+func repeatedHeadFoot(pages []rawPage) (map[string]bool, map[string]bool) {
+	headCount := map[string]int{}
+	footCount := map[string]int{}
+	for _, rp := range pages {
+		seenH := map[string]bool{}
+		seenF := map[string]bool{}
+		for _, ln := range groupLines(rp.Runs) {
+			yMid := (ln.y0 + ln.y1) / 2
+			key := hfKey(ln)
+			if key == "" {
+				continue
+			}
+			if yMid < rp.H*headFooterBand && !seenH[key] {
+				headCount[key]++
+				seenH[key] = true
+			} else if yMid > rp.H*(1-headFooterBand) && !seenF[key] {
+				footCount[key]++
+				seenF[key] = true
+			}
+		}
+	}
+	head := map[string]bool{}
+	foot := map[string]bool{}
+	for k, c := range headCount {
+		if c >= 2 {
+			head[k] = true
+		}
+	}
+	for k, c := range footCount {
+		if c >= 2 {
+			foot[k] = true
+		}
+	}
+	return head, foot
+}
+
+// sortBlocksReadingOrder — thứ tự đọc: gom khối theo BĂNG Y (khối chồng y
+// ≥ 30% chiều cao khối thấp hơn vào cùng băng — cùng "hàng"), sort băng theo
+// y, trong băng sort theo x0. Khắc phục trộn cột: khối trái đọc trước khối phải.
+func sortBlocksReadingOrder(blocks []Block) {
+	type band struct {
+		y0, y1 float64
+		items  []int
+	}
+	idx := make([]int, len(blocks))
+	for i := range idx {
+		idx[i] = i
+	}
+	sort.Slice(idx, func(a, b int) bool {
+		return blocks[idx[a]].Y0 < blocks[idx[b]].Y0
+	})
+	var bands []band
+	for _, bi := range idx {
+		b := &blocks[bi]
+		placed := false
+		for k := len(bands) - 1; k >= 0 && !placed; k-- {
+			bd := &bands[k]
+			// chồng y: phần giao ≥ 30% chiều cao nhỏ hơn
+			ov := minF(b.Y1, bd.y1) - maxF(b.Y0, bd.y0)
+			hmin := minF(b.Y1-b.Y0, bd.y1-bd.y0)
+			if hmin <= 0 {
+				hmin = 1
+			}
+			if ov > 0.3*hmin {
+				bd.items = append(bd.items, bi)
+				if b.Y0 < bd.y0 {
+					bd.y0 = b.Y0
+				}
+				if b.Y1 > bd.y1 {
+					bd.y1 = b.Y1
+				}
+				placed = true
+			}
+			if b.Y0 > bd.y1 {
+				break // băng này đã nằm hoàn toàn phía trên
+			}
+		}
+		if !placed {
+			bands = append(bands, band{y0: b.Y0, y1: b.Y1, items: []int{bi}})
+		}
+	}
+	sort.SliceStable(bands, func(a, b int) bool { return bands[a].y0 < bands[b].y0 })
+	ordered := make([]Block, 0, len(blocks))
+	for _, bd := range bands {
+		items := append([]int(nil), bd.items...)
+		sort.SliceStable(items, func(a, b int) bool {
+			return blocks[items[a]].X0 < blocks[items[b]].X0
+		})
+		for _, bi := range items {
+			ordered = append(ordered, blocks[bi])
+		}
+	}
+	copy(blocks, ordered)
 }
 
 // ═══════════════ dòng ═══════════════

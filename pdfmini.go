@@ -28,9 +28,9 @@ var reObjHead = regexp.MustCompile(`(?:^|[\s>\r\n])(\d{1,10})\s+(\d{1,5})\s+obj\
 var reWs = regexp.MustCompile(`\s+`)
 
 type pdfObj struct {
-	num     int
-	raw     []byte          // phần trước stream (dict/mảng/...) hoặc toàn bộ
-	stream  []byte          // dữ liệu stream ĐÃ GIẢI NÉP (nil nếu không phải stream)
+	num       int
+	raw       []byte // phần trước stream (dict/mảng/...) hoặc toàn bộ
+	stream    []byte // dữ liệu stream ĐÃ GIẢI NÉP (nil nếu không phải stream)
 	hasStream bool
 }
 
@@ -246,12 +246,12 @@ func intFromDict(raw []byte, key string) int {
 // pdfValue — giá trị đơn giản: name "x", number, string, ref (num trong R),
 // array, dict. Dùng cho điều hướng cấu trúc, không phải parser đầy đủ.
 type pdfValue struct {
-	kind  byte // 'n' name, 'd' number, 's' string, 'r' ref, 'a' array, 'm' dict
-	num   float64
-	str   string
-	list  []pdfValue
-	dict  map[string]pdfValue
-	ref   int
+	kind byte // 'n' name, 'd' number, 's' string, 'r' ref, 'a' array, 'm' dict
+	num  float64
+	str  string
+	list []pdfValue
+	dict map[string]pdfValue
+	ref  int
 }
 
 func (v pdfValue) name() string {
@@ -539,9 +539,9 @@ func (pf *pdfFile) objBytes(v pdfValue) ([]byte, *pdfObj) {
 
 // cmap — bảng mã glyph → chuỗi Unicode của một font.
 type cmap struct {
-	codeLen   int
-	m         map[int]string
-	hi, lo    map[int]string // fallback riêng không cần — gộp vào m
+	codeLen int
+	m       map[int]string
+	hi, lo  map[int]string // fallback riêng không cần — gộp vào m
 }
 
 func newCMap() *cmap { return &cmap{codeLen: 1, m: map[int]string{}} }
@@ -550,12 +550,27 @@ func newCMap() *cmap { return &cmap{codeLen: 1, m: map[int]string{}} }
 func parseCMap(data []byte) *cmap {
 	cm := newCMap()
 	text := string(data)
-	// độ dài mã = số byte của hex NGUỒN trong khối bfchar
-	// (chỉ quét bfchar — hex đích của bfrange như <0041> có thể 2 byte và
-	// làm codeLen sai → toàn bộ chuỗi thành FFFD)
+	// độ dài mã = số byte của hex NGUỒN. Quét cả bfchar LẪN bfrange (hex lo/hi
+	// là mã nguồn): WeasyPrint dùng bfrange thuần cho Identity-H — nếu chỉ quét
+	// bfchar thì codeLen=1 và cả trang thành rác Latin-1. Hex ĐÍCH của bfchar
+	// (UTF-16, có thể nhiều đơn vị) không được dùng để dò.
 	reHexPair := regexp.MustCompile(`<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>`)
-	for _, blk := range regexp.MustCompile(`beginbfchar(.*?)endbfchar`).FindAllStringSubmatch(text, -1) {
+	reRange1 := regexp.MustCompile(`<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>`)
+	reRange2 := regexp.MustCompile(`<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*\[([^\]]*)\]`)
+	for _, blk := range regexp.MustCompile(`(?s)beginbfchar(.*?)endbfchar`).FindAllStringSubmatch(text, -1) {
 		for _, m := range reHexPair.FindAllStringSubmatch(blk[1], -1) {
+			if l := len(m[1]) / 2; l > cm.codeLen && l <= 8 {
+				cm.codeLen = l
+			}
+		}
+	}
+	for _, blk := range regexp.MustCompile(`(?s)beginbfrange(.*?)endbfrange`).FindAllStringSubmatch(text, -1) {
+		for _, m := range reRange1.FindAllStringSubmatch(blk[1], -1) {
+			if l := len(m[1]) / 2; l > cm.codeLen && l <= 8 {
+				cm.codeLen = l
+			}
+		}
+		for _, m := range reRange2.FindAllStringSubmatch(blk[1], -1) {
 			if l := len(m[1]) / 2; l > cm.codeLen && l <= 8 {
 				cm.codeLen = l
 			}
@@ -572,8 +587,6 @@ func parseCMap(data []byte) *cmap {
 		}
 	}
 	// bfrange 2 dạng: <lo> <hi> <dstStart> | <lo> <hi> [ <d1> <d2> ... ]
-	reRange1 := regexp.MustCompile(`<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>`)
-	reRange2 := regexp.MustCompile(`<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*\[([^\]]*)\]`)
 	for _, blk := range regexp.MustCompile(`(?s)beginbfrange(.*?)endbfrange`).FindAllStringSubmatch(text, -1) {
 		body := blk[1]
 		for _, m := range reRange1.FindAllStringSubmatch(body, -1) {
@@ -970,7 +983,10 @@ func extractRuns(info *pdfPageInfo) []Run {
 				if inText {
 					if arr := lastArray(stack); arr != nil {
 						s := showTJ(*arr, info, fontKey, fontSize)
-						runs = append(runs, makeRun(s, info, tm, ctm, fontKey, fontSize))
+						if debugRawRuns {
+							println("TJ font=", fontKey, "raw=", hexPreview(s))
+						}
+						runs = append(runs, makeRunDecoded(s, info, tm, ctm, fontKey, fontSize))
 					}
 				}
 				stack = stack[:0]
@@ -1011,14 +1027,42 @@ func lastArray(stack []pdfValue) *pdfValue {
 }
 
 // makeRun — tạo Run từ chuỗi glyph: giải mã theo font, tính vị trí + cỡ.
+// debugRawRuns — bật in chuỗi glyph gốc để chẩn đoán (chỉ dùng khi test).
+var debugRawRuns bool
+
+// hexPreview — biểu diễn hex của chuỗi byte (chẩn đoán).
+func hexPreview(s string) string {
+	const digits = "0123456789abcdef"
+	out := make([]byte, 0, len(s)*3)
+	for i := 0; i < len(s) && i < 60; i++ {
+		out = append(out, digits[s[i]>>4], digits[s[i]&0xf], ' ')
+	}
+	return string(out)
+}
+
 func makeRun(rawStr string, info *pdfPageInfo, tm, ctm mtx, fontKey string, fontSize float64) Run {
 	fi := info.Fonts[fontKey]
+	if debugRawRuns {
+		println("makeRun font=", fontKey, "raw=", hexPreview(rawStr))
+	}
 	text := rawStr
 	if fi != nil && fi.cm != nil {
 		text = fi.cm.decodeStr(rawStr)
 	} else if fi == nil || fi.cm == nil {
 		text = latin1ToUTF8(rawStr)
 	}
+	return buildRun(text, info, tm, ctm, fontKey, fontSize)
+}
+
+// makeRunDecoded — dựng Run từ văn bản ĐÃ decode (dùng cho TJ: showTJ decode
+// từng chuỗi thành phần; decode lại lần nữa sẽ hỏng chữ).
+func makeRunDecoded(text string, info *pdfPageInfo, tm, ctm mtx, fontKey string, fontSize float64) Run {
+	return buildRun(text, info, tm, ctm, fontKey, fontSize)
+}
+
+// buildRun — dựng Run từ văn bản đã decode + trạng thái text hiện hành.
+func buildRun(text string, info *pdfPageInfo, tm, ctm mtx, fontKey string, fontSize float64) Run {
+	fi := info.Fonts[fontKey]
 	mm := mulM(tm, ctm)
 	x, y := mm.apply(0, 0)
 	size := fontSize
@@ -1045,25 +1089,26 @@ func makeRun(rawStr string, info *pdfPageInfo, tm, ctm mtx, fontKey string, font
 		Bold:   bold,
 		Italic: italic,
 		X0:     x, Y0: yTop - size,
-		X1:     x + w, Y1: yTop,
-		Conf:   1.0,
+		X1: x + w, Y1: yTop,
+		Conf: 1.0,
 	}
 }
 
-// showTJ — mảng TJ: ghép chuỗi; số âm lớn → chèn khoảng trắng.
+// showTJ — mảng TJ: decode TỪNG chuỗi qua cmap rồi mới ghép; số âm lớn → chèn
+// khoảng trắng giữa các đoạn ĐÃ decode. Không được chèn byte vào giữa chuỗi
+// CID 2-byte — lệch cặp byte làm hỏng cả phần sau (lỗi thật trên Quy chế 274:
+// kerning ≤ -100 khiến cả dòng thành rác).
 func showTJ(arr pdfValue, info *pdfPageInfo, fontKey string, fontSize float64) string {
 	fi := info.Fonts[fontKey]
 	out := ""
 	for _, v := range arr.list {
 		switch v.kind {
 		case 's':
-			s := v.str
 			if fi != nil && fi.cm != nil {
-				s = fi.cm.decodeStr(s)
+				out += fi.cm.decodeStr(v.str)
 			} else {
-				s = latin1ToUTF8(s)
+				out += latin1ToUTF8(v.str)
 			}
-			out += s
 		case 'd':
 			if v.num <= -100 {
 				out += " "
